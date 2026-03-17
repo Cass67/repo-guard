@@ -37,6 +37,29 @@ bin/repo-guard --langs python,typescript --upgrade ~/src/existing-repo
 
 If `repo-path` is omitted, the current working directory is used.
 
+### Shell Alias
+
+If you do not want to type the full path each time, add an alias to your shell config:
+
+```sh
+echo 'alias repo-guard="$HOME/git/repo-guard/bin/repo-guard"' >> ~/.zshrc
+echo 'alias repo-guard="$HOME/git/repo-guard/bin/repo-guard"' >> ~/.bashrc
+```
+
+Reload your shell config or start a new shell session, then use:
+
+```sh
+repo-guard --langs python,typescript ~/src/my-repo
+repo-guard --check-tools go
+```
+
+If you want a one-command bootstrap for new repos:
+
+```sh
+echo 'newrepo() { mkdir -p "$1" && cd "$1" && git init && repo-guard "$PWD"; }' >> ~/.zshrc
+echo 'newrepo() { mkdir -p "$1" && cd "$1" && git init && repo-guard "$PWD"; }' >> ~/.bashrc
+```
+
 Important behavior changes:
 
 - default behavior is to write repo files and report missing tools without installing them
