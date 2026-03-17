@@ -23,13 +23,13 @@ jobs:
       - name: Install Python deps
         run: python -m pip install --upgrade pip pre-commit
 
-      - name: Install shellcheck (Ubuntu)
+      - name: Install CLI deps (Ubuntu)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck ripgrep
 
-      - name: Install shellcheck (macOS)
+      - name: Install CLI deps (macOS)
         if: runner.os == 'macOS'
-        run: brew install shellcheck
+        run: brew install shellcheck ripgrep
 
       - name: Shellcheck
         run: shellcheck bin/repo-guard tests/*.sh
