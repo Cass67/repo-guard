@@ -1,0 +1,20 @@
+# repo-guard:ansible:start
+  - repo: local
+    hooks:
+      - id: yamllint
+        name: yamllint
+        entry: bash -lc 'if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/yamllint" ]; then "$VIRTUAL_ENV/bin/yamllint" "$@"; elif [ -x ./.venv/bin/yamllint ]; then ./.venv/bin/yamllint "$@"; elif [ -x ./venv/bin/yamllint ]; then ./venv/bin/yamllint "$@"; else yamllint "$@"; fi' --
+        language: system
+        files: \.(ya?ml)$
+      - id: ansible-lint
+        name: ansible-lint
+        entry: bash -lc 'if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/ansible-lint" ]; then "$VIRTUAL_ENV/bin/ansible-lint" .; elif [ -x ./.venv/bin/ansible-lint ]; then ./.venv/bin/ansible-lint .; elif [ -x ./venv/bin/ansible-lint ]; then ./venv/bin/ansible-lint .; else ansible-lint .; fi' --
+        language: system
+        files: \.(ya?ml|j2|jinja2)$
+        pass_filenames: false
+      - id: djlint
+        name: djlint
+        entry: bash -lc 'if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/djlint" ]; then "$VIRTUAL_ENV/bin/djlint" --check "$@"; elif [ -x ./.venv/bin/djlint ]; then ./.venv/bin/djlint --check "$@"; elif [ -x ./venv/bin/djlint ]; then ./venv/bin/djlint --check "$@"; else djlint --check "$@"; fi' --
+        language: system
+        files: \.(j2|jinja2)$
+# repo-guard:ansible:end

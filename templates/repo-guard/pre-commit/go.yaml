@@ -1,0 +1,32 @@
+# repo-guard:go:start
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt
+        entry: bash -lc 'gofmt -w "$@"'
+        language: system
+        files: \.go$
+      - id: goimports
+        name: goimports
+        entry: bash -lc 'goimports -w "$@"'
+        language: system
+        files: \.go$
+      - id: go-vet
+        name: go vet
+        entry: go vet ./...
+        language: system
+        files: \.go$
+        pass_filenames: false
+      - id: golangci-lint
+        name: golangci-lint
+        entry: golangci-lint run
+        language: system
+        files: \.go$
+        pass_filenames: false
+      - id: govulncheck
+        name: govulncheck
+        entry: govulncheck ./...
+        language: system
+        files: \.go$
+        pass_filenames: false
+# repo-guard:go:end

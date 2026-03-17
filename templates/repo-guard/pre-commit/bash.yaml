@@ -1,0 +1,19 @@
+# repo-guard:bash:start
+  - repo: local
+    hooks:
+      - id: shfmt
+        name: shfmt
+        entry: shfmt -w -i 2 -ci
+        language: system
+        files: \.(sh|bash)$
+      - id: shellcheck
+        name: shellcheck
+        entry: shellcheck
+        language: system
+        files: \.(sh|bash)$
+      - id: bash-syntax
+        name: bash syntax
+        entry: bash -n
+        language: system
+        files: \.(sh|bash)$
+# repo-guard:bash:end

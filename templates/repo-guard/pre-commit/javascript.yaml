@@ -1,0 +1,14 @@
+# repo-guard:javascript:start
+  - repo: local
+    hooks:
+      - id: eslint
+        name: eslint
+        entry: bash -lc 'if [ -x ./node_modules/.bin/eslint ]; then ./node_modules/.bin/eslint "$@"; else eslint "$@"; fi' --
+        language: system
+        files: \.(js|jsx|mjs|cjs)$
+      - id: prettier
+        name: prettier
+        entry: bash -lc 'if [ -x ./node_modules/.bin/prettier ]; then ./node_modules/.bin/prettier --write "$@"; else prettier --write "$@"; fi' --
+        language: system
+        files: \.(js|jsx|mjs|cjs|json|md|yaml|yml)$
+# repo-guard:javascript:end

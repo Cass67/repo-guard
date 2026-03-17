@@ -1,0 +1,1140 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+tool_root="$(cd -- "$script_dir/.." && pwd)"
+template_dir="$tool_root/templates/repo-guard"
+precommit_dir="$template_dir/pre-commit"
+repo_root="$PWD"
+langs_csv=""
+auto_install="no"
+detected_os=""
+package_manager=""
+dry_run=0
+check_tools_only=0
+git_init=0
+upgrade_mode=0
+detect_mode=0
+
+selected_langs=()
+required_tools=()
+missing_tools=()
+version_check_failed=0
+detected_langs=()
+
+show_help() {
+  cat <<'EOF'
+usage: repo-guard [--langs python,go,...] [--detect] [--yes|--prompt-install|--no-install] [--dry-run] [--check-tools] [--git-init] [--upgrade] [repo-path]
+
+bootstraps a repo with secret-safe defaults and local pre-commit hooks
+
+supported languages:
+  python, go, bash, rust, c, javascript, typescript, ansible
+
+aliases:
+  py, js, ts, sh, shell, cpp, cxx
+
+options:
+  --yes              install missing tools automatically when supported
+  --prompt-install   prompt before installing missing tools
+  --no-install       report missing tools without installing them (default)
+  --dry-run          show planned changes without writing files
+  --check-tools      report required tools for the selected languages and exit
+  --detect           scan an existing repo to infer languages and merge them with --langs
+  --git-init         run git init when the target repo is not already a Git repository
+  --upgrade          replace existing repo-guard managed pre-commit blocks with current templates
+  --help, -h         show this help
+
+automatic tool installation is supported on macOS and Linux
+EOF
+}
+
+lowercase() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+contains_element() {
+  local needle=$1
+  shift
+  local item
+  for item in "$@"; do
+    if [ "$item" = "$needle" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+log_info() {
+  printf '%s\n' "$1"
+}
+
+log_warn() {
+  printf '%s\n' "$1" >&2
+}
+
+append_missing_lines() {
+  local template_file=$1
+  local target_file=$2
+  local tmp_file
+  local changed=0
+  local line
+
+  if [ ! -f "$target_file" ]; then
+    if [ "$dry_run" -eq 1 ]; then
+      log_info "would create $target_file from $template_file"
+    else
+      cp "$template_file" "$target_file"
+    fi
+    return
+  fi
+
+  tmp_file=$(mktemp "${TMPDIR:-/tmp}/repo-guard.XXXXXX")
+  cp "$target_file" "$tmp_file"
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ -z "$line" ]; then
+      if [ -s "$tmp_file" ] && [ "$(tail -n 1 "$tmp_file")" != "" ]; then
+        printf '\n' >> "$tmp_file"
+        changed=1
+      fi
+      continue
+    fi
+
+    if ! grep -Fqx -- "$line" "$tmp_file"; then
+      printf '%s\n' "$line" >> "$tmp_file"
+      changed=1
+    fi
+  done < "$template_file"
+
+  if [ "$changed" -eq 0 ]; then
+    rm -f "$tmp_file"
+    return
+  fi
+
+  if [ "$dry_run" -eq 1 ]; then
+    log_info "would append missing lines from $template_file to $target_file"
+    rm -f "$tmp_file"
+  else
+    mv "$tmp_file" "$target_file"
+  fi
+}
+
+append_template_if_missing_header() {
+  local template_file=$1
+  local target_file=$2
+  local header=$3
+
+  if [ ! -f "$target_file" ] || [ ! -s "$target_file" ]; then
+    if [ "$dry_run" -eq 1 ]; then
+      log_info "would create $target_file from $template_file"
+    else
+      cp "$template_file" "$target_file"
+    fi
+    return
+  fi
+
+  if grep -Fqx -- "$header" "$target_file"; then
+    return
+  fi
+
+  if [ "$dry_run" -eq 1 ]; then
+    log_info "would append template block from $template_file to $target_file"
+    return
+  fi
+
+  printf '\n' >> "$target_file"
+  cat "$template_file" >> "$target_file"
+}
+
+ensure_precommit_file() {
+  local target_file=$1
+
+  if [ ! -f "$target_file" ]; then
+    if [ "$dry_run" -eq 1 ]; then
+      log_info "would create $target_file with top-level repos: key"
+    else
+      printf 'repos:\n' > "$target_file"
+    fi
+    return
+  fi
+
+  if ! grep -Eq '^[[:space:]]*repos:[[:space:]]*$' "$target_file"; then
+    log_warn "existing .pre-commit-config.yaml has no top-level repos: key"
+    exit 1
+  fi
+}
+
+append_precommit_fragment() {
+  local fragment_file=$1
+  local marker=$2
+  local target_file=$3
+  if [ -f "$target_file" ] && grep -Fqx -- "$marker" "$target_file"; then
+    return
+  fi
+
+  if [ "$dry_run" -eq 1 ]; then
+    log_info "would append pre-commit fragment $fragment_file to $target_file"
+    return
+  fi
+
+  if [ -s "$target_file" ]; then
+    printf '\n' >> "$target_file"
+  fi
+  cat "$fragment_file" >> "$target_file"
+}
+
+replace_precommit_fragment() {
+  local fragment_file=$1
+  local target_file=$2
+  local start_marker
+  local end_marker
+  local tmp_file
+
+  start_marker=$(sed -n '1p' "$fragment_file")
+  end_marker=$(tail -n 1 "$fragment_file")
+
+  if [ ! -f "$target_file" ] || ! grep -Fqx -- "$start_marker" "$target_file"; then
+    append_precommit_fragment "$fragment_file" "$start_marker" "$target_file"
+    return
+  fi
+
+  if ! grep -Fqx -- "$end_marker" "$target_file"; then
+    log_warn "existing managed block is missing end marker: $end_marker"
+    exit 1
+  fi
+
+  if [ "$dry_run" -eq 1 ]; then
+    log_info "would replace managed pre-commit fragment $fragment_file in $target_file"
+    return
+  fi
+
+  tmp_file=$(mktemp "${TMPDIR:-/tmp}/repo-guard.XXXXXX")
+  awk -v start="$start_marker" -v end="$end_marker" -v fragment="$fragment_file" '
+    BEGIN { in_block = 0 }
+    $0 == start {
+      while ((getline line < fragment) > 0) {
+        print line
+      }
+      close(fragment)
+      in_block = 1
+      next
+    }
+    in_block {
+      if ($0 == end) {
+        in_block = 0
+      }
+      next
+    }
+    { print }
+  ' "$target_file" > "$tmp_file"
+  mv "$tmp_file" "$target_file"
+}
+
+normalize_lang() {
+  local lang
+  lang=$(lowercase "$1")
+
+  case "$lang" in
+    py) printf 'python\n' ;;
+    js) printf 'javascript\n' ;;
+    ts) printf 'typescript\n' ;;
+    sh|shell) printf 'bash\n' ;;
+    c|cpp|cxx) printf 'c\n' ;;
+    *) printf '%s\n' "$lang" ;;
+  esac
+}
+
+add_selected_lang() {
+  local lang=$1
+
+  case "$lang" in
+    python|go|bash|rust|c|javascript|typescript|ansible)
+      if ! contains_element "$lang" "${selected_langs[@]:-}"; then
+        selected_langs+=("$lang")
+      fi
+      ;;
+    *)
+      log_warn "unsupported language: $lang"
+      exit 1
+      ;;
+  esac
+}
+
+add_detected_lang() {
+  local lang=$1
+  add_selected_lang "$lang"
+  if ! contains_element "$lang" "${detected_langs[@]:-}"; then
+    detected_langs+=("$lang")
+  fi
+}
+
+repo_has_globs() {
+  local pattern
+  local cmd=(rg --files .)
+
+  if ! command -v rg >/dev/null 2>&1; then
+    return 1
+  fi
+
+  for pattern in "$@"; do
+    cmd+=(-g "$pattern")
+  done
+
+  (
+    cd "$repo_root"
+    "${cmd[@]}" >/dev/null 2>&1
+  )
+}
+
+detect_repo_langs() {
+  if [ ! -d "$repo_root" ]; then
+    log_warn "--detect skipped because repo path does not exist yet: $repo_root"
+    return
+  fi
+
+  if ! command -v rg >/dev/null 2>&1; then
+    log_warn "--detect requires rg (ripgrep) to scan the repo"
+    return
+  fi
+
+  if repo_has_globs "*.py" "pyproject.toml" "setup.py" "setup.cfg" "Pipfile" "tox.ini" "requirements*.txt"; then
+    add_detected_lang python
+  fi
+
+  if repo_has_globs "*.go" "go.mod" "go.sum"; then
+    add_detected_lang go
+  fi
+
+  if repo_has_globs "*.sh" ".shellcheckrc" ".bashrc" ".bash_profile" ".bash_aliases"; then
+    add_detected_lang bash
+  fi
+
+  if repo_has_globs "*.rs" "Cargo.toml" "Cargo.lock"; then
+    add_detected_lang rust
+  fi
+
+  if repo_has_globs "*.c" "*.cc" "*.cpp" "*.cxx" "*.h" "*.hh" "*.hpp" "CMakeLists.txt" "meson.build" "compile_commands.json"; then
+    add_detected_lang c
+  fi
+
+  if repo_has_globs "*.js" "*.jsx" "package.json"; then
+    add_detected_lang javascript
+  fi
+
+  if repo_has_globs "*.ts" "*.tsx" "*.mts" "*.cts" "tsconfig.json"; then
+    add_detected_lang typescript
+  fi
+
+  if repo_has_globs \
+    "ansible.cfg" \
+    "*.j2" \
+    "*.jinja2" \
+    "playbooks/**" \
+    "roles/**" \
+    "group_vars/**" \
+    "host_vars/**" \
+    "inventories/**"; then
+    add_detected_lang ansible
+  fi
+}
+
+detect_platform() {
+  case "$(uname -s)" in
+    Darwin)
+      detected_os="macos"
+      if command -v brew >/dev/null 2>&1; then
+        package_manager="brew"
+      else
+        package_manager=""
+      fi
+      ;;
+    Linux)
+      detected_os="linux"
+      if command -v apt-get >/dev/null 2>&1; then
+        package_manager="apt"
+      elif command -v dnf >/dev/null 2>&1; then
+        package_manager="dnf"
+      elif command -v pacman >/dev/null 2>&1; then
+        package_manager="pacman"
+      else
+        package_manager=""
+      fi
+      ;;
+    *)
+      detected_os="unsupported"
+      package_manager=""
+      ;;
+  esac
+}
+
+add_required_tool() {
+  local tool=$1
+  if ! contains_element "$tool" "${required_tools[@]:-}"; then
+    required_tools+=("$tool")
+  fi
+}
+
+tool_exists() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+collect_required_tools() {
+  add_required_tool pre-commit
+  add_required_tool rg
+  add_required_tool gitleaks
+
+  local lang
+  for lang in "${selected_langs[@]}"; do
+    case "$lang" in
+      python)
+        add_required_tool ruff
+        add_required_tool bandit
+        add_required_tool radon
+        add_required_tool vulture
+        ;;
+      go)
+        add_required_tool go
+        add_required_tool goimports
+        add_required_tool golangci-lint
+        add_required_tool govulncheck
+        ;;
+      bash)
+        add_required_tool shfmt
+        add_required_tool shellcheck
+        add_required_tool bash
+        ;;
+      rust)
+        add_required_tool cargo
+        add_required_tool cargo-audit
+        ;;
+      c)
+        add_required_tool cppcheck
+        ;;
+      javascript)
+        add_required_tool eslint
+        add_required_tool prettier
+        ;;
+      typescript)
+        add_required_tool eslint
+        add_required_tool prettier
+        add_required_tool tsc
+        ;;
+      ansible)
+        add_required_tool yamllint
+        add_required_tool ansible-lint
+        add_required_tool djlint
+        ;;
+    esac
+  done
+}
+
+collect_missing_tools() {
+  local tool
+  missing_tools=()
+  for tool in "${required_tools[@]}"; do
+    if ! tool_exists "$tool"; then
+      missing_tools+=("$tool")
+    fi
+  done
+}
+
+print_missing_tools() {
+  local tool
+  if [ "${#missing_tools[@]}" -eq 0 ]; then
+    log_info "all required tools are available"
+    return
+  fi
+
+  log_info "missing local tools for this repo:"
+  for tool in "${missing_tools[@]}"; do
+    log_info "  - $tool"
+  done
+}
+
+minimum_version_for_tool() {
+  case "$1" in
+    pre-commit) printf '3.6.0\n' ;;
+    rg) printf '13.0.0\n' ;;
+    gitleaks) printf '8.18.0\n' ;;
+    ruff) printf '0.5.0\n' ;;
+    bandit) printf '1.7.8\n' ;;
+    radon) printf '6.0.1\n' ;;
+    vulture) printf '2.11\n' ;;
+    go) printf '1.22.0\n' ;;
+    golangci-lint) printf '1.59.0\n' ;;
+    shfmt) printf '3.8.0\n' ;;
+    shellcheck) printf '0.9.0\n' ;;
+    cargo) printf '1.75.0\n' ;;
+    cargo-audit) printf '0.18.0\n' ;;
+    cppcheck) printf '2.13.0\n' ;;
+    eslint) printf '9.0.0\n' ;;
+    prettier) printf '3.0.0\n' ;;
+    tsc) printf '5.4.0\n' ;;
+    yamllint) printf '1.35.0\n' ;;
+    ansible-lint) printf '24.2.0\n' ;;
+    djlint) printf '1.34.0\n' ;;
+    *) printf '\n' ;;
+  esac
+}
+
+extract_version() {
+  printf '%s\n' "$1" | grep -Eo '[0-9]+([.][0-9]+)+' | head -n 1 || true
+}
+
+installed_version_for_tool() {
+  local tool=$1
+  local raw=""
+
+  case "$tool" in
+    pre-commit|rg|gitleaks|ruff|go|golangci-lint|shfmt|cppcheck|eslint|prettier|tsc|yamllint|ansible-lint|djlint)
+      raw=$("$tool" --version 2>&1 | head -n 1 || true)
+      ;;
+    bandit|radon|vulture|cargo|cargo-audit)
+      raw=$("$tool" --version 2>&1 | head -n 1 || true)
+      ;;
+    shellcheck)
+      raw=$(shellcheck --version 2>&1 | awk -F': ' '/^version:/ {print $2; exit}' || true)
+      ;;
+    *)
+      raw=""
+      ;;
+  esac
+
+  extract_version "$raw"
+}
+
+version_ge() {
+  local left=$1
+  local right=$2
+  local left_parts right_parts max_len i
+  local IFS=.
+
+  read -r -a left_parts <<< "$left"
+  read -r -a right_parts <<< "$right"
+
+  if [ "${#left_parts[@]}" -gt "${#right_parts[@]}" ]; then
+    max_len=${#left_parts[@]}
+  else
+    max_len=${#right_parts[@]}
+  fi
+
+  for ((i = 0; i < max_len; i++)); do
+    local left_num=${left_parts[i]:-0}
+    local right_num=${right_parts[i]:-0}
+
+    if ((10#$left_num > 10#$right_num)); then
+      return 0
+    fi
+    if ((10#$left_num < 10#$right_num)); then
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+print_tool_versions() {
+  local tool
+  local installed
+  local minimum
+
+  version_check_failed=0
+  log_info "tool versions:"
+
+  for tool in "${required_tools[@]}"; do
+    if ! tool_exists "$tool"; then
+      continue
+    fi
+
+    installed=$(installed_version_for_tool "$tool")
+    minimum=$(minimum_version_for_tool "$tool")
+
+    if [ -z "$minimum" ]; then
+      if [ -n "$installed" ]; then
+        log_info "  - $tool: $installed"
+      else
+        log_info "  - $tool: installed"
+      fi
+      continue
+    fi
+
+    if [ -z "$installed" ]; then
+      log_info "  - $tool: installed (minimum tested $minimum, version unknown)"
+      continue
+    fi
+
+    if version_ge "$installed" "$minimum"; then
+      log_info "  - $tool: $installed (minimum tested $minimum)"
+    else
+      log_warn "  - $tool: $installed is below minimum tested $minimum"
+      version_check_failed=1
+    fi
+  done
+}
+
+install_python_cli() {
+  local package=$1
+
+  if command -v pipx >/dev/null 2>&1; then
+    if pipx list --short 2>/dev/null | grep -Fqx "$package"; then
+      return
+    fi
+    pipx install "$package"
+    return
+  fi
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    log_warn "python3 is not installed. Install Python first, then rerun this script."
+    return 1
+  fi
+
+  python3 -m pip install --user "$package"
+}
+
+install_node_cli() {
+  local package=$1
+  if ! command -v npm >/dev/null 2>&1; then
+    log_warn "npm is not installed. Install Node.js first, then rerun this script."
+    return 1
+  fi
+  npm install -g "$package"
+}
+
+install_with_brew() {
+  local tool=$1
+  case "$tool" in
+    pre-commit|rg|gitleaks|ruff|golangci-lint|shfmt|shellcheck|cppcheck|yamllint)
+      brew install "$tool"
+      ;;
+    bandit|radon|vulture|ansible-lint|djlint)
+      install_python_cli "$tool"
+      ;;
+    go)
+      brew install go
+      ;;
+    goimports)
+      go install golang.org/x/tools/cmd/goimports@latest
+      ;;
+    govulncheck)
+      go install golang.org/x/vuln/cmd/govulncheck@latest
+      ;;
+    cargo)
+      log_warn "cargo is not installed. Install Rust first, then rerun this script."
+      return 1
+      ;;
+    cargo-audit)
+      cargo install cargo-audit
+      ;;
+    clang-format|clang-tidy)
+      brew install llvm
+      ;;
+    eslint|prettier)
+      install_node_cli "$tool"
+      ;;
+    tsc)
+      install_node_cli typescript
+      ;;
+    bash)
+      ;;
+    *)
+      log_warn "no brew install rule for $tool"
+      return 1
+      ;;
+  esac
+}
+
+install_with_apt() {
+  local tool=$1
+  case "$tool" in
+    pre-commit|shellcheck|cppcheck)
+      sudo apt-get update
+      sudo apt-get install -y "$tool"
+      ;;
+    rg)
+      sudo apt-get update
+      sudo apt-get install -y ripgrep
+      ;;
+    gitleaks)
+      log_warn "install gitleaks manually, then rerun this script."
+      return 1
+      ;;
+    ruff|bandit|radon|vulture|yamllint|ansible-lint|djlint)
+      install_python_cli "$tool"
+      ;;
+    go)
+      sudo apt-get update
+      sudo apt-get install -y golang-go
+      ;;
+    goimports)
+      go install golang.org/x/tools/cmd/goimports@latest
+      ;;
+    golangci-lint)
+      log_warn "install golangci-lint manually, then rerun this script."
+      return 1
+      ;;
+    govulncheck)
+      go install golang.org/x/vuln/cmd/govulncheck@latest
+      ;;
+    shfmt)
+      sudo apt-get update
+      sudo apt-get install -y shfmt
+      ;;
+    cargo)
+      log_warn "cargo is not installed. Install Rust first, then rerun this script."
+      return 1
+      ;;
+    cargo-audit)
+      cargo install cargo-audit
+      ;;
+    clang-format|clang-tidy)
+      sudo apt-get update
+      sudo apt-get install -y "$tool"
+      ;;
+    eslint|prettier)
+      install_node_cli "$tool"
+      ;;
+    tsc)
+      install_node_cli typescript
+      ;;
+    bash)
+      ;;
+    *)
+      log_warn "no apt install rule for $tool"
+      return 1
+      ;;
+  esac
+}
+
+install_with_dnf() {
+  local tool=$1
+  case "$tool" in
+    pre-commit|shellcheck|cppcheck|shfmt)
+      sudo dnf install -y "$tool"
+      ;;
+    rg)
+      sudo dnf install -y ripgrep
+      ;;
+    gitleaks)
+      log_warn "install gitleaks manually, then rerun this script."
+      return 1
+      ;;
+    ruff|bandit|radon|vulture|yamllint|ansible-lint|djlint)
+      install_python_cli "$tool"
+      ;;
+    go)
+      sudo dnf install -y golang
+      ;;
+    goimports)
+      go install golang.org/x/tools/cmd/goimports@latest
+      ;;
+    golangci-lint)
+      log_warn "install golangci-lint manually, then rerun this script."
+      return 1
+      ;;
+    govulncheck)
+      go install golang.org/x/vuln/cmd/govulncheck@latest
+      ;;
+    cargo)
+      log_warn "cargo is not installed. Install Rust first, then rerun this script."
+      return 1
+      ;;
+    cargo-audit)
+      cargo install cargo-audit
+      ;;
+    clang-format|clang-tidy)
+      sudo dnf install -y "$tool"
+      ;;
+    eslint|prettier)
+      install_node_cli "$tool"
+      ;;
+    tsc)
+      install_node_cli typescript
+      ;;
+    bash)
+      ;;
+    *)
+      log_warn "no dnf install rule for $tool"
+      return 1
+      ;;
+  esac
+}
+
+install_with_pacman() {
+  local tool=$1
+  case "$tool" in
+    pre-commit|shellcheck|cppcheck|shfmt)
+      sudo pacman -S --noconfirm "$tool"
+      ;;
+    rg)
+      sudo pacman -S --noconfirm ripgrep
+      ;;
+    gitleaks)
+      log_warn "install gitleaks manually, then rerun this script."
+      return 1
+      ;;
+    ruff|bandit|radon|vulture|yamllint|ansible-lint|djlint)
+      install_python_cli "$tool"
+      ;;
+    go)
+      sudo pacman -S --noconfirm go
+      ;;
+    goimports)
+      go install golang.org/x/tools/cmd/goimports@latest
+      ;;
+    golangci-lint)
+      sudo pacman -S --noconfirm golangci-lint
+      ;;
+    govulncheck)
+      go install golang.org/x/vuln/cmd/govulncheck@latest
+      ;;
+    cargo)
+      log_warn "cargo is not installed. Install Rust first, then rerun this script."
+      return 1
+      ;;
+    cargo-audit)
+      cargo install cargo-audit
+      ;;
+    clang-format|clang-tidy)
+      sudo pacman -S --noconfirm clang
+      ;;
+    eslint|prettier)
+      install_node_cli "$tool"
+      ;;
+    tsc)
+      install_node_cli typescript
+      ;;
+    bash)
+      ;;
+    *)
+      log_warn "no pacman install rule for $tool"
+      return 1
+      ;;
+  esac
+}
+
+install_missing_tools() {
+  local reply
+  local tool
+
+  if [ "${#missing_tools[@]}" -eq 0 ]; then
+    return
+  fi
+
+  print_missing_tools
+
+  if [ "$auto_install" = "no" ]; then
+    return
+  fi
+
+  detect_platform
+  if [ "$detected_os" = "unsupported" ]; then
+    log_warn "automatic tool installation is supported only on macOS and Linux."
+    return
+  fi
+
+  if [ -z "$package_manager" ]; then
+    log_warn "no supported package manager detected; install missing tools manually"
+    return
+  fi
+
+  if [ "$auto_install" = "prompt" ]; then
+    if [ "$dry_run" -eq 1 ]; then
+      log_info "would prompt before installing missing tools"
+      return
+    fi
+    if [ ! -t 0 ]; then
+      log_info "non-interactive shell detected; skipping tool installation"
+      return
+    fi
+    printf 'install missing tools now? [y/N] '
+    read -r reply
+    if [[ ! "$reply" =~ ^[Yy]$ ]]; then
+      return
+    fi
+  fi
+
+  if [ "$dry_run" -eq 1 ]; then
+    for tool in "${missing_tools[@]}"; do
+      log_info "would install $tool via $package_manager"
+    done
+    return
+  fi
+
+  for tool in "${missing_tools[@]}"; do
+    log_info "installing $tool"
+    case "$package_manager" in
+      brew) install_with_brew "$tool" ;;
+      apt) install_with_apt "$tool" ;;
+      dnf) install_with_dnf "$tool" ;;
+      pacman) install_with_pacman "$tool" ;;
+      *)
+        log_warn "no supported package manager detected; install $tool manually"
+        ;;
+    esac
+  done
+}
+
+apply_file_permissions() {
+  local file
+  for file in \
+    "$repo_root/AGENTS.md" \
+    "$repo_root/LOCAL_TOOLING.md" \
+    "$repo_root/.ignore" \
+    "$repo_root/.rgignore" \
+    "$repo_root/.gitignore" \
+    "$repo_root/.pre-commit-config.yaml"; do
+    if [ ! -e "$file" ]; then
+      continue
+    fi
+    if [ "$dry_run" -eq 1 ]; then
+      log_info "would set mode 600 on $file"
+    else
+      chmod 600 "$file"
+    fi
+  done
+}
+
+install_precommit_hook() {
+  if [ ! -d "$repo_root/.git" ] || ! command -v pre-commit >/dev/null 2>&1; then
+    return
+  fi
+
+  if [ "$dry_run" -eq 1 ]; then
+    log_info "would run pre-commit install in $repo_root"
+    return
+  fi
+
+  (
+    cd "$repo_root"
+    pre-commit install >/dev/null
+  )
+}
+
+ensure_git_repo() {
+  if [ -d "$repo_root/.git" ]; then
+    return
+  fi
+
+  if [ "$git_init" -ne 1 ]; then
+    return
+  fi
+
+  if ! command -v git >/dev/null 2>&1; then
+    log_warn "git is not installed. Install git first, then rerun this script."
+    return 1
+  fi
+
+  if [ "$dry_run" -eq 1 ]; then
+    log_info "would run git init in $repo_root"
+    return
+  fi
+
+  (
+    cd "$repo_root"
+    git init >/dev/null
+  )
+}
+
+join_langs() {
+  local first=1
+  local lang
+  for lang in "$@"; do
+    if [ "$first" -eq 1 ]; then
+      printf '%s' "$lang"
+      first=0
+    else
+      printf ', %s' "$lang"
+    fi
+  done
+}
+
+resolve_repo_root() {
+  if [ -e "$repo_root" ] && [ ! -d "$repo_root" ]; then
+    log_warn "repo path exists but is not a directory: $repo_root"
+    exit 1
+  fi
+
+  case "$repo_root" in
+    /*)
+      ;;
+    *)
+      repo_root="$PWD/$repo_root"
+      ;;
+  esac
+
+  if [ "$dry_run" -eq 1 ] || [ "$check_tools_only" -eq 1 ]; then
+    return
+  fi
+
+  mkdir -p "$repo_root"
+  repo_root="$(cd "$repo_root" && pwd)"
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --help|-h)
+      show_help
+      exit 0
+      ;;
+    --langs)
+      if [ $# -lt 2 ]; then
+        log_warn "--langs requires a comma-separated value"
+        exit 1
+      fi
+      langs_csv=$2
+      shift 2
+      ;;
+    --langs=*)
+      langs_csv=${1#--langs=}
+      shift
+      ;;
+    --yes)
+      auto_install="yes"
+      shift
+      ;;
+    --prompt-install)
+      auto_install="prompt"
+      shift
+      ;;
+    --no-install)
+      auto_install="no"
+      shift
+      ;;
+    --dry-run)
+      dry_run=1
+      shift
+      ;;
+    --check-tools)
+      check_tools_only=1
+      shift
+      ;;
+    --detect)
+      detect_mode=1
+      shift
+      ;;
+    --git-init)
+      git_init=1
+      shift
+      ;;
+    --upgrade)
+      upgrade_mode=1
+      shift
+      ;;
+    -*)
+      log_warn "unknown option: $1"
+      exit 1
+      ;;
+    *)
+      repo_root=$1
+      shift
+      ;;
+  esac
+done
+
+resolve_repo_root
+
+if [ -n "$langs_csv" ]; then
+  IFS=',' read -r -a local_langs <<< "$langs_csv"
+  for raw_lang in "${local_langs[@]}"; do
+    lang=$(printf '%s' "$raw_lang" | tr -d '[:space:]')
+    if [ -z "$lang" ]; then
+      continue
+    fi
+
+    normalized=$(normalize_lang "$lang")
+    add_selected_lang "$normalized"
+  done
+fi
+
+if [ "$detect_mode" -eq 1 ]; then
+  detect_repo_langs
+fi
+
+collect_required_tools
+collect_missing_tools
+
+if [ "$check_tools_only" -eq 1 ]; then
+  if [ "${#detected_langs[@]}" -gt 0 ]; then
+    log_info "detected repo languages: $(join_langs "${detected_langs[@]}")"
+  fi
+  print_missing_tools
+  print_tool_versions
+  if [ "${#missing_tools[@]}" -gt 0 ]; then
+    exit 1
+  fi
+  if [ "$version_check_failed" -ne 0 ]; then
+    exit 1
+  fi
+  exit 0
+fi
+
+if [ "$dry_run" -eq 1 ]; then
+  if [ ! -d "$repo_root" ]; then
+    log_info "would create directory $repo_root"
+  fi
+fi
+
+append_template_if_missing_header \
+  "$template_dir/AGENTS.md" \
+  "$repo_root/AGENTS.md" \
+  "# Security Lockdown Rules"
+append_missing_lines "$template_dir/.ignore" "$repo_root/.ignore"
+append_missing_lines "$template_dir/.rgignore" "$repo_root/.rgignore"
+append_missing_lines "$template_dir/.gitignore" "$repo_root/.gitignore"
+append_template_if_missing_header \
+  "$template_dir/LOCAL_TOOLING.md" \
+  "$repo_root/LOCAL_TOOLING.md" \
+  "# Local Tooling"
+ensure_precommit_file "$repo_root/.pre-commit-config.yaml"
+if [ "$upgrade_mode" -eq 1 ]; then
+  replace_precommit_fragment \
+    "$precommit_dir/base.yaml" \
+    "$repo_root/.pre-commit-config.yaml"
+else
+  append_precommit_fragment \
+    "$precommit_dir/base.yaml" \
+    "# repo-guard:base:start" \
+    "$repo_root/.pre-commit-config.yaml"
+fi
+
+for lang in "${selected_langs[@]}"; do
+  if [ "$upgrade_mode" -eq 1 ]; then
+    replace_precommit_fragment \
+      "$precommit_dir/$lang.yaml" \
+      "$repo_root/.pre-commit-config.yaml"
+  else
+    append_precommit_fragment \
+      "$precommit_dir/$lang.yaml" \
+      "# repo-guard:$lang:start" \
+      "$repo_root/.pre-commit-config.yaml"
+  fi
+done
+
+apply_file_permissions
+install_missing_tools
+ensure_git_repo
+install_precommit_hook
+
+if [ "${#selected_langs[@]}" -gt 0 ]; then
+  langs_display=$(join_langs "${selected_langs[@]}")
+else
+  langs_display="base hooks"
+fi
+
+if [ "$dry_run" -eq 1 ]; then
+  if [ "${#detected_langs[@]}" -gt 0 ]; then
+    log_info "detected repo languages: $(join_langs "${detected_langs[@]}")"
+  fi
+  log_info "dry run complete for $repo_root with $langs_display"
+else
+  if [ "${#detected_langs[@]}" -gt 0 ]; then
+    log_info "detected repo languages: $(join_langs "${detected_langs[@]}")"
+  fi
+  if [ "${#selected_langs[@]}" -gt 0 ]; then
+    log_info "secured repo defaults in $repo_root with hooks for $langs_display"
+  else
+    log_info "secured repo defaults in $repo_root with base hooks"
+  fi
+fi

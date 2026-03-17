@@ -1,0 +1,32 @@
+# repo-guard:python:start
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: bash -lc 'if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/ruff" ]; then "$VIRTUAL_ENV/bin/ruff" check --fix "$@"; elif [ -x ./.venv/bin/ruff ]; then ./.venv/bin/ruff check --fix "$@"; elif [ -x ./venv/bin/ruff ]; then ./venv/bin/ruff check --fix "$@"; else ruff check --fix "$@"; fi' --
+        language: system
+        files: \.pyi?$
+      - id: ruff-format
+        name: ruff format
+        entry: bash -lc 'if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/ruff" ]; then "$VIRTUAL_ENV/bin/ruff" format "$@"; elif [ -x ./.venv/bin/ruff ]; then ./.venv/bin/ruff format "$@"; elif [ -x ./venv/bin/ruff ]; then ./venv/bin/ruff format "$@"; else ruff format "$@"; fi' --
+        language: system
+        files: \.pyi?$
+      - id: bandit
+        name: bandit
+        entry: bash -lc 'if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/bandit" ]; then "$VIRTUAL_ENV/bin/bandit" -q -r .; elif [ -x ./.venv/bin/bandit ]; then ./.venv/bin/bandit -q -r .; elif [ -x ./venv/bin/bandit ]; then ./venv/bin/bandit -q -r .; else bandit -q -r .; fi' --
+        language: system
+        files: \.pyi?$
+        pass_filenames: false
+      - id: radon-cc
+        name: radon complexity
+        entry: bash -lc 'if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/radon" ]; then "$VIRTUAL_ENV/bin/radon" cc -s -n B .; elif [ -x ./.venv/bin/radon ]; then ./.venv/bin/radon cc -s -n B .; elif [ -x ./venv/bin/radon ]; then ./venv/bin/radon cc -s -n B .; else radon cc -s -n B .; fi' --
+        language: system
+        files: \.pyi?$
+        pass_filenames: false
+      - id: vulture
+        name: vulture dead code
+        entry: bash -lc 'if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/vulture" ]; then "$VIRTUAL_ENV/bin/vulture" .; elif [ -x ./.venv/bin/vulture ]; then ./.venv/bin/vulture .; elif [ -x ./venv/bin/vulture ]; then ./venv/bin/vulture .; else vulture .; fi' --
+        language: system
+        files: \.pyi?$
+        pass_filenames: false
+# repo-guard:python:end
