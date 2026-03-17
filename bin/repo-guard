@@ -386,7 +386,10 @@ collect_required_tools() {
   add_required_tool gitleaks
 
   local lang
-  for lang in "${selected_langs[@]}"; do
+  for lang in "${selected_langs[@]-}"; do
+    if [ -z "$lang" ]; then
+      continue
+    fi
     case "$lang" in
       python)
         add_required_tool ruff
@@ -433,7 +436,10 @@ collect_required_tools() {
 collect_missing_tools() {
   local tool
   missing_tools=()
-  for tool in "${required_tools[@]}"; do
+  for tool in "${required_tools[@]-}"; do
+    if [ -z "$tool" ]; then
+      continue
+    fi
     if ! tool_exists "$tool"; then
       missing_tools+=("$tool")
     fi
@@ -447,8 +453,11 @@ print_missing_tools() {
     return
   fi
 
-  log_info "missing local tools for this repo:"
-  for tool in "${missing_tools[@]}"; do
+  log_info "missing local tools for current selection:"
+  for tool in "${missing_tools[@]-}"; do
+    if [ -z "$tool" ]; then
+      continue
+    fi
     log_info "  - $tool"
   done
 }
@@ -543,7 +552,10 @@ print_tool_versions() {
   version_check_failed=0
   log_info "tool versions:"
 
-  for tool in "${required_tools[@]}"; do
+  for tool in "${required_tools[@]-}"; do
+    if [ -z "$tool" ]; then
+      continue
+    fi
     if ! tool_exists "$tool"; then
       continue
     fi
@@ -856,13 +868,19 @@ install_missing_tools() {
   fi
 
   if [ "$dry_run" -eq 1 ]; then
-    for tool in "${missing_tools[@]}"; do
+    for tool in "${missing_tools[@]-}"; do
+      if [ -z "$tool" ]; then
+        continue
+      fi
       log_info "would install $tool via $package_manager"
     done
     return
   fi
 
-  for tool in "${missing_tools[@]}"; do
+  for tool in "${missing_tools[@]-}"; do
+    if [ -z "$tool" ]; then
+      continue
+    fi
     log_info "installing $tool"
     case "$package_manager" in
       brew) install_with_brew "$tool" ;;
@@ -1008,6 +1026,11 @@ while [ $# -gt 0 ]; do
       ;;
     --check-tools)
       check_tools_only=1
+      if [ $# -ge 2 ] && [[ $2 != -* ]] && [ ! -d "$2" ]; then
+        langs_csv=$2
+        shift 2
+        continue
+      fi
       shift
       ;;
     --detect)
@@ -1099,7 +1122,10 @@ else
     "$repo_root/.pre-commit-config.yaml"
 fi
 
-for lang in "${selected_langs[@]}"; do
+for lang in "${selected_langs[@]-}"; do
+  if [ -z "$lang" ]; then
+    continue
+  fi
   if [ "$upgrade_mode" -eq 1 ]; then
     replace_precommit_fragment \
       "$precommit_dir/$lang.yaml" \
