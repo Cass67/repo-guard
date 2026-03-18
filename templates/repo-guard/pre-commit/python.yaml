@@ -13,20 +13,17 @@
         files: \.pyi?$
       - id: bandit
         name: bandit
-        entry: bash -lc 'if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/bandit" ]; then "$VIRTUAL_ENV/bin/bandit" -q -r .; elif [ -x ./.venv/bin/bandit ]; then ./.venv/bin/bandit -q -r .; elif [ -x ./venv/bin/bandit ]; then ./venv/bin/bandit -q -r .; else bandit -q -r .; fi' --
+        entry: bash -lc 'if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/bandit" ]; then "$VIRTUAL_ENV/bin/bandit" -q "$@"; elif [ -x ./.venv/bin/bandit ]; then ./.venv/bin/bandit -q "$@"; elif [ -x ./venv/bin/bandit ]; then ./venv/bin/bandit -q "$@"; else bandit -q "$@"; fi' --
         language: system
         files: \.pyi?$
-        pass_filenames: false
       - id: radon-cc
         name: radon complexity
-        entry: bash -lc 'if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/radon" ]; then "$VIRTUAL_ENV/bin/radon" cc -s -n B .; elif [ -x ./.venv/bin/radon ]; then ./.venv/bin/radon cc -s -n B .; elif [ -x ./venv/bin/radon ]; then ./venv/bin/radon cc -s -n B .; else radon cc -s -n B .; fi' --
+        entry: bash -lc 'if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/radon" ]; then "$VIRTUAL_ENV/bin/radon" cc -s -n B "$@"; elif [ -x ./.venv/bin/radon ]; then ./.venv/bin/radon cc -s -n B "$@"; elif [ -x ./venv/bin/radon ]; then ./venv/bin/radon cc -s -n B "$@"; else radon cc -s -n B "$@"; fi' --
         language: system
         files: \.pyi?$
-        pass_filenames: false
       - id: vulture
         name: vulture dead code
-        entry: bash -lc 'if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/vulture" ]; then "$VIRTUAL_ENV/bin/vulture" .; elif [ -x ./.venv/bin/vulture ]; then ./.venv/bin/vulture .; elif [ -x ./venv/bin/vulture ]; then ./venv/bin/vulture .; else vulture .; fi' --
+        entry: bash -lc 'if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/vulture" ]; then "$VIRTUAL_ENV/bin/vulture" --min-confidence 80 "$@"; elif [ -x ./.venv/bin/vulture ]; then ./.venv/bin/vulture --min-confidence 80 "$@"; elif [ -x ./venv/bin/vulture ]; then ./venv/bin/vulture --min-confidence 80 "$@"; else vulture --min-confidence 80 "$@"; fi' --
         language: system
         files: \.pyi?$
-        pass_filenames: false
 # repo-guard:python:end
