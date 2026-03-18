@@ -119,6 +119,8 @@ The script copies or merges these templates into the target repo:
 - [`templates/repo-guard/.rgignore`](templates/repo-guard/.rgignore)
 - [`templates/repo-guard/.gitignore`](templates/repo-guard/.gitignore)
 
+`AGENTS.md` is handled more strictly than the ignore files. If the target repo already has a root `AGENTS.md` that is not already the `repo-guard` security template, `repo-guard` renames the existing file to `AGENTS_renamed.md` (or a numbered variant if needed), installs the security-first `AGENTS.md`, and adds a short note in the new file pointing back to the preserved instructions.
+
 ### Pre-commit hooks
 
 The script ensures `.pre-commit-config.yaml` exists with a top-level `repos:` key, then appends:

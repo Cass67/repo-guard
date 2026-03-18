@@ -14,6 +14,8 @@ trap cleanup EXIT
 
 "$script" --help >/dev/null
 "$script" --dry-run --langs python,typescript "$target_repo" >/dev/null
+mkdir -p "$target_repo"
+printf 'Legacy repo agent note\n' >"$target_repo/AGENTS.md"
 "$script" --langs python,typescript --no-install "$target_repo" >/dev/null
 "$script" --langs python,typescript --no-install "$target_repo" >/dev/null
 "$script" --check-tools --langs python >/tmp/repo-guard-check-tools.out 2>/tmp/repo-guard-check-tools.err || true
@@ -25,6 +27,7 @@ git_target_repo="$tmp_root/git-repo"
 "$script" --langs python --no-install --git-init "$git_target_repo" >/dev/null
 
 test -f "$target_repo/AGENTS.md"
+test -f "$target_repo/AGENTS_renamed.md"
 test -f "$target_repo/LOCAL_TOOLING.md"
 test -f "$target_repo/.ignore"
 test -f "$target_repo/.rgignore"
@@ -32,6 +35,8 @@ test -f "$target_repo/.gitignore"
 test -f "$target_repo/.pre-commit-config.yaml"
 
 grep -Fqx "# Security Lockdown Rules" "$target_repo/AGENTS.md"
+grep -Fqx "Legacy repo agent note" "$target_repo/AGENTS_renamed.md"
+grep -Fq "Previous repo-level instructions were preserved at \`AGENTS_renamed.md\`." "$target_repo/AGENTS.md"
 grep -Fqx "# Local Tooling" "$target_repo/LOCAL_TOOLING.md"
 grep -Fqx "# repo-guard:base:start" "$target_repo/.pre-commit-config.yaml"
 grep -Fqx "# repo-guard:python:start" "$target_repo/.pre-commit-config.yaml"

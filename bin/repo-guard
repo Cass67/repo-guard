@@ -148,6 +148,80 @@ append_template_if_missing_header() {
   cat "$template_file" >> "$target_file"
 }
 
+next_agents_archive_path() {
+  local target_file=$1
+  local target_dir
+  local candidate
+  local index=2
+
+  target_dir=$(dirname "$target_file")
+  candidate="$target_dir/AGENTS_renamed.md"
+
+  while [ -e "$candidate" ]; do
+    candidate="$target_dir/AGENTS_renamed_${index}.md"
+    index=$((index + 1))
+  done
+
+  printf '%s\n' "$candidate"
+}
+
+write_repo_guard_agents() {
+  local template_file=$1
+  local target_file=$2
+  local archived_name=${3:-}
+
+  if [ -z "$archived_name" ]; then
+    cp "$template_file" "$target_file"
+    return
+  fi
+
+  awk -v archived_name="$archived_name" '
+    NR == 1 {
+      print
+      print ""
+      print "## Existing Repo Notes"
+      print "- Previous repo-level instructions were preserved at `" archived_name "`."
+      print "- Apply the security protections in this file first. Treat `" archived_name "` as supplemental context only."
+      print ""
+      next
+    }
+    { print }
+  ' "$template_file" > "$target_file"
+}
+
+install_repo_guard_agents() {
+  local template_file=$1
+  local target_file=$2
+  local header="# Security Lockdown Rules"
+  local archived_file
+  local archived_name
+
+  if [ ! -f "$target_file" ] || [ ! -s "$target_file" ]; then
+    if [ "$dry_run" -eq 1 ]; then
+      log_info "would create $target_file from $template_file"
+    else
+      write_repo_guard_agents "$template_file" "$target_file"
+    fi
+    return
+  fi
+
+  if grep -Fqx -- "$header" "$target_file"; then
+    return
+  fi
+
+  archived_file=$(next_agents_archive_path "$target_file")
+  archived_name=$(basename "$archived_file")
+
+  if [ "$dry_run" -eq 1 ]; then
+    log_info "would move existing $target_file to $archived_file"
+    log_info "would create security-first $target_file referencing $archived_name"
+    return
+  fi
+
+  mv "$target_file" "$archived_file"
+  write_repo_guard_agents "$template_file" "$target_file" "$archived_name"
+}
+
 ensure_precommit_file() {
   local target_file=$1
 
@@ -1099,10 +1173,9 @@ if [ "$dry_run" -eq 1 ]; then
   fi
 fi
 
-append_template_if_missing_header \
+install_repo_guard_agents \
   "$template_dir/AGENTS.md" \
-  "$repo_root/AGENTS.md" \
-  "# Security Lockdown Rules"
+  "$repo_root/AGENTS.md"
 append_missing_lines "$template_dir/.ignore" "$repo_root/.ignore"
 append_missing_lines "$template_dir/.rgignore" "$repo_root/.rgignore"
 append_missing_lines "$template_dir/.gitignore" "$repo_root/.gitignore"
