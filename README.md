@@ -5,7 +5,7 @@
 It installs or merges:
 
 - `AGENTS.md` with security-handling rules
-- `.ignore`, `.rgignore`, and `.gitignore` entries for secret-bearing files
+- `.ignore`, `.rgignore`, and `.gitignore` entries for secret-bearing files plus common OS/editor junk
 - `LOCAL_TOOLING.md` documenting required local CLIs
 - `.pre-commit-config.yaml` assembled from base and language-specific hook fragments
 

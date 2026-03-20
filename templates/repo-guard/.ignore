@@ -55,3 +55,24 @@ Library/Application Support/Firefox/
 history.jsonl
 sessions/
 log/
+
+# OS and editor workspace noise.
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100/
+.Trashes/
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.directory
+.fseventsd/
+.TemporaryItems/
+.Trash-*/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
