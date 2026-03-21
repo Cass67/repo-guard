@@ -50,6 +50,7 @@ grep -Fq "\$VIRTUAL_ENV/bin/ruff" "$target_repo/.pre-commit-config.yaml"
 grep -Fq "./.venv/bin/ruff" "$target_repo/.pre-commit-config.yaml"
 grep -Fq "./node_modules/.bin/eslint" "$target_repo/.pre-commit-config.yaml"
 grep -Fq "./node_modules/.bin/tsc --noEmit" "$target_repo/.pre-commit-config.yaml"
+grep -Fq "exclude: ^\\.pre-commit-config\\.yaml$" "$target_repo/.pre-commit-config.yaml"
 grep -Fq "name: ruff check" "$target_repo/.pre-commit-config.yaml"
 if grep -Fq "name: stale ruff check" "$target_repo/.pre-commit-config.yaml"; then
   echo "upgrade did not refresh managed python block" >&2
@@ -67,5 +68,46 @@ test "$python_count" -eq 1
 test "$typescript_count" -eq 1
 test -d "$git_target_repo/.git"
 test -f "$git_target_repo/.git/hooks/pre-commit"
+
+if python3 - "$repo_root" <<'PY'; then
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+violations = []
+for path in sorted((root / "templates" / "repo-guard" / "pre-commit").glob("*.yaml")):
+    for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+        if len(line) > 100:
+            violations.append(f"{path}:{lineno}:{len(line)}")
+
+if violations:
+    print("\n".join(violations))
+    raise SystemExit(1)
+PY
+  :
+else
+  echo "pre-commit template contains lines longer than 100 characters" >&2
+  exit 1
+fi
+
+if python3 - "$target_repo/.pre-commit-config.yaml" <<'PY'; then
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+violations = []
+for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+    if len(line) > 100:
+        violations.append(f"{path}:{lineno}:{len(line)}")
+
+if violations:
+    print("\n".join(violations))
+    raise SystemExit(1)
+PY
+  :
+else
+  echo "generated .pre-commit-config.yaml contains lines longer than 100 characters" >&2
+  exit 1
+fi
 
 echo "smoke test passed"

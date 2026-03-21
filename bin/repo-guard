@@ -663,6 +663,16 @@ print_tool_versions() {
 install_python_cli() {
   local package=$1
 
+  if [ -n "${VIRTUAL_ENV:-}" ]; then
+    if ! command -v python3 >/dev/null 2>&1; then
+      log_warn "python3 is not installed. Install Python first, then rerun this script."
+      return 1
+    fi
+
+    python3 -m pip install "$package"
+    return
+  fi
+
   if command -v pipx >/dev/null 2>&1; then
     if pipx list --short 2>/dev/null | grep -Fqx "$package"; then
       return

@@ -3,12 +3,18 @@
     hooks:
       - id: clang-format
         name: clang-format if installed
-        entry: bash -lc 'if command -v clang-format >/dev/null 2>&1; then clang-format --dry-run --Werror "$@"; else echo "clang-format not installed, skipping"; fi' --
+        entry: >-
+          bash -lc 'if command -v clang-format >/dev/null 2>&1; then
+          clang-format --dry-run --Werror "$@"; else echo "clang-format not
+          installed, skipping"; fi' --
         language: system
         files: \.(c|cc|cpp|cxx|h|hh|hpp|hxx)$
       - id: clang-tidy
         name: clang-tidy if installed
-        entry: bash -lc 'if command -v clang-tidy >/dev/null 2>&1; then clang-tidy "$@"; else echo "clang-tidy not installed, skipping"; fi' --
+        entry: >-
+          bash -lc 'if command -v clang-tidy >/dev/null 2>&1; then
+          clang-tidy "$@"; else echo "clang-tidy not installed, skipping";
+          fi' --
         language: system
         files: \.(c|cc|cpp|cxx)$
       - id: cppcheck

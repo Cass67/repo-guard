@@ -3,17 +3,25 @@
     hooks:
       - id: eslint
         name: eslint
-        entry: bash -lc 'if [ -x ./node_modules/.bin/eslint ]; then ./node_modules/.bin/eslint "$@"; else eslint "$@"; fi' --
+        entry: >-
+          bash -lc 'if [ -x ./node_modules/.bin/eslint ]; then
+          ./node_modules/.bin/eslint "$@"; else eslint "$@"; fi' --
         language: system
         files: \.(ts|tsx|mts|cts)$
       - id: prettier
         name: prettier
-        entry: bash -lc 'if [ -x ./node_modules/.bin/prettier ]; then ./node_modules/.bin/prettier --write "$@"; else prettier --write "$@"; fi' --
+        entry: >-
+          bash -lc 'if [ -x ./node_modules/.bin/prettier ]; then
+          ./node_modules/.bin/prettier --write "$@"; else prettier --write
+          "$@"; fi' --
         language: system
         files: \.(ts|tsx|mts|cts|json|md|yaml|yml)$
+        exclude: ^\.pre-commit-config\.yaml$
       - id: tsc-noemit
         name: tsc --noEmit
-        entry: bash -lc 'if [ -x ./node_modules/.bin/tsc ]; then ./node_modules/.bin/tsc --noEmit; else tsc --noEmit; fi' --
+        entry: >-
+          bash -lc 'if [ -x ./node_modules/.bin/tsc ]; then
+          ./node_modules/.bin/tsc --noEmit; else tsc --noEmit; fi' --
         language: system
         files: \.(ts|tsx|mts|cts)$
         pass_filenames: false
