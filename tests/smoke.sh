@@ -20,8 +20,32 @@ printf 'Legacy repo agent note\n' >"$target_repo/AGENTS.md"
 "$script" --langs python,typescript --no-install "$target_repo" >/dev/null
 "$script" --check-tools --langs python >/tmp/repo-guard-check-tools.out 2>/tmp/repo-guard-check-tools.err || true
 
+tmp_legacy="$tmp_root/legacy-prettier-block.txt"
+cat >"$tmp_legacy" <<'EOF'
+  - repo: local
+    hooks:
+      - id: eslint
+        name: eslint
+        entry: bash -lc 'if [ -x ./node_modules/.bin/eslint ]; then ./node_modules/.bin/eslint "$@"; else eslint "$@"; fi' --
+        language: system
+        files: \.(ts|tsx|mts|cts)$
+      - id: prettier
+        name: prettier
+        entry: bash -lc 'if [ -x ./node_modules/.bin/prettier ]; then ./node_modules/.bin/prettier --write "$@"; else prettier --write "$@"; fi' --
+        language: system
+        files: \.(ts|tsx|mts|cts|json|md|yaml|yml)$
+EOF
+python3 - "$target_repo/.pre-commit-config.yaml" "$tmp_legacy" <<'PY'
+from pathlib import Path
+import sys
+
+target = Path(sys.argv[1])
+legacy = Path(sys.argv[2]).read_text()
+target.write_text("repos:\n\n" + legacy + "\n" + target.read_text().removeprefix("repos:\n"))
+PY
+
 perl -0pi -e 's/name: ruff check/name: stale ruff check/' "$target_repo/.pre-commit-config.yaml"
-"$script" --langs python,typescript --no-install --upgrade "$target_repo" >/dev/null
+"$script" --no-install --upgrade "$target_repo" >/dev/null
 
 git_target_repo="$tmp_root/git-repo"
 "$script" --langs python --no-install --git-init "$git_target_repo" >/dev/null
@@ -66,8 +90,15 @@ typescript_count="$(grep -Fc "# repo-guard:typescript:start" "$target_repo/.pre-
 test "$base_count" -eq 1
 test "$python_count" -eq 1
 test "$typescript_count" -eq 1
+test "$(grep -Fc "id: prettier" "$target_repo/.pre-commit-config.yaml")" -eq 1
 test -d "$git_target_repo/.git"
 test -f "$git_target_repo/.git/hooks/pre-commit"
+(
+  cd "$target_repo"
+  git init -q
+  printf 'safe\n' >safe.txt
+  pre-commit run risky-filenames --files safe.txt >/dev/null
+)
 
 if python3 - "$repo_root" <<'PY'; then
 from pathlib import Path

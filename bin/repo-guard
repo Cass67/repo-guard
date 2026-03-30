@@ -306,6 +306,99 @@ replace_precommit_fragment() {
   mv "$tmp_file" "$target_file"
 }
 
+cleanup_legacy_precommit_blocks() {
+  local target_file=$1
+  local tmp_file
+
+  if [ ! -f "$target_file" ]; then
+    return
+  fi
+
+  if [ "$dry_run" -eq 1 ]; then
+    log_info "would remove legacy unmarked repo-guard pre-commit blocks from $target_file"
+    return
+  fi
+
+  tmp_file=$(mktemp "${TMPDIR:-/tmp}/repo-guard.XXXXXX")
+  awk '
+    function flush_block() {
+      if (!in_repo_block) {
+        return
+      }
+
+      if (!(block_is_legacy_repo_guard && !block_is_managed)) {
+        printf "%s", block
+      }
+
+      block = ""
+      in_repo_block = 0
+      block_is_legacy_repo_guard = 0
+      common_hook_count = 0
+      signature_count = 0
+      block_is_managed = 0
+    }
+
+    BEGIN {
+      in_managed_block = 0
+      in_repo_block = 0
+      block = ""
+      block_is_legacy_repo_guard = 0
+      common_hook_count = 0
+      signature_count = 0
+      block_is_managed = 0
+      unique_hook = "^(      - id: )(risky-filenames|merge-conflict|trailing-whitespace|detect-private-key|ruff-check|ruff-format|radon-cc|vulture|go-vet|golangci-lint|govulncheck|bash-syntax|cargo-fmt|cargo-clippy|cargo-audit|tsc-noemit|ansible-lint|djlint)$"
+      common_hook = "^(      - id: )(gitleaks|bandit|gofmt|goimports|shfmt|shellcheck|clang-format|clang-tidy|cppcheck|eslint|prettier|yamllint)$"
+      repo_guard_signature = "(gitleaks git --pre-commit --staged --redact|\\$VIRTUAL_ENV/bin/ruff|\\./\\.venv/bin/ruff|\\./node_modules/\\.bin/(eslint|prettier|tsc)|golangci-lint run|govulncheck \\./\\.\\.\\.|cargo fmt --all -- --check|cargo clippy --all-targets --all-features -- -D warnings|ansible-lint \\.|djlint --check)"
+    }
+
+    /^# repo-guard:[^:]+:start$/ {
+      flush_block()
+      in_managed_block = 1
+      print
+      next
+    }
+
+    /^# repo-guard:[^:]+:end$/ {
+      flush_block()
+      in_managed_block = 0
+      print
+      next
+    }
+
+    /^  - repo: / {
+      flush_block()
+      in_repo_block = 1
+      block_is_managed = in_managed_block
+      block = $0 ORS
+      next
+    }
+
+    in_repo_block {
+      block = block $0 ORS
+      if ($0 ~ unique_hook) {
+        block_is_legacy_repo_guard = 1
+      }
+      if ($0 ~ common_hook) {
+        common_hook_count += 1
+      }
+      if ($0 ~ repo_guard_signature) {
+        signature_count += 1
+      }
+      if (common_hook_count >= 2 && signature_count >= 1) {
+        block_is_legacy_repo_guard = 1
+      }
+      next
+    }
+
+    { print }
+
+    END {
+      flush_block()
+    }
+  ' "$target_file" > "$tmp_file"
+  mv "$tmp_file" "$target_file"
+}
+
 normalize_lang() {
   local lang
   lang=$(lowercase "$1")
@@ -412,6 +505,21 @@ detect_repo_langs() {
     "inventories/**"; then
     add_detected_lang ansible
   fi
+}
+
+detect_existing_precommit_langs() {
+  local precommit_file="$repo_root/.pre-commit-config.yaml"
+  local lang
+
+  if [ ! -f "$precommit_file" ]; then
+    return
+  fi
+
+  for lang in python go bash rust c javascript typescript ansible; do
+    if grep -Fqx -- "# repo-guard:$lang:start" "$precommit_file"; then
+      add_selected_lang "$lang"
+    fi
+  done
 }
 
 detect_platform() {
@@ -1159,6 +1267,10 @@ if [ "$detect_mode" -eq 1 ]; then
   detect_repo_langs
 fi
 
+if [ "$upgrade_mode" -eq 1 ]; then
+  detect_existing_precommit_langs
+fi
+
 collect_required_tools
 collect_missing_tools
 
@@ -1195,6 +1307,7 @@ append_template_if_missing_header \
   "# Local Tooling"
 ensure_precommit_file "$repo_root/.pre-commit-config.yaml"
 if [ "$upgrade_mode" -eq 1 ]; then
+  cleanup_legacy_precommit_blocks "$repo_root/.pre-commit-config.yaml"
   replace_precommit_fragment \
     "$precommit_dir/base.yaml" \
     "$repo_root/.pre-commit-config.yaml"
