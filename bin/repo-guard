@@ -1292,7 +1292,11 @@ run_python_checks() {
     return $?
   fi
 
-  log_info "no Python dependency manifest found, skipping pip-audit"
+  if [ "$json_mode" -eq 1 ]; then
+    printf '%s\n' "no Python dependency manifest found, skipping pip-audit" >&2
+  else
+    log_info "no Python dependency manifest found, skipping pip-audit"
+  fi
   return 0
 }
 
@@ -1368,7 +1372,11 @@ run_container_deep() {
       podman build -t "$image_name" -f "$target/Dockerfile" "$target"
     fi
   else
-    log_info "no container file found, skipping image build"
+    if [ "$json_mode" -eq 1 ]; then
+      printf '%s\n' "no container file found, skipping image build" >&2
+    else
+      log_info "no container file found, skipping image build"
+    fi
     return 0
   fi
 

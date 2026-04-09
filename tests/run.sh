@@ -107,6 +107,12 @@ empty_repo="$tmp_root/empty-repo"
 mkdir -p "$empty_repo"
 empty_repo="$(cd "$empty_repo" && pwd)"
 
+: >"$tmp_root/no-manifest.json"
+no_manifest_repo="$tmp_root/no-manifest-repo"
+mkdir -p "$no_manifest_repo"
+no_manifest_repo="$(cd "$no_manifest_repo" && pwd)"
+printf 'print("hello")\n' >"$no_manifest_repo/app.py"
+
 : >"$run_log"
 env PATH="$path_value" RUN_LOG="$run_log" \
   "$script" run "$python_repo" >/dev/null
@@ -185,5 +191,32 @@ if env PATH="$path_value" RUN_MODE=json \
   echo "run --json unexpectedly exited 0 when scanner exited non-zero" >&2
   exit 1
 fi
+
+python3 - "$tmp_root/run-failed-check.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+assert data["status"] == "error"
+assert data["checks"][0]["status"] == "error"
+PY
+
+env PATH="$path_value" RUN_MODE=json \
+  PIP_AUDIT_JSON="$tmp_root/pip-audit.json" \
+  TRIVY_FS_JSON="$tmp_root/trivy-empty.json" \
+  TRIVY_CONFIG_JSON="$tmp_root/trivy-empty.json" \
+  TRIVY_IMAGE_JSON="$tmp_root/trivy-empty.json" \
+  "$script" run --json "$no_manifest_repo" >"$tmp_root/no-manifest.json"
+
+python3 - "$tmp_root/no-manifest.json" "$no_manifest_repo" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+assert data["repo"]["path"] == sys.argv[2]
+assert data["status"] in ("clean", "skipped")
+PY
 
 echo "run test passed"
