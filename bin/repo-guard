@@ -91,12 +91,15 @@ log_warn() {
 capture_command_output() {
   local stdout_file=$1
   local stderr_file=$2
+  local exit_code=0
   shift 2
 
   if "$@" >"$stdout_file" 2>"$stderr_file"; then
     return 0
+  else
+    exit_code=$?
   fi
-  return $?
+  return "$exit_code"
 }
 
 append_missing_lines() {

@@ -175,4 +175,15 @@ assert check["unsuppressed_count"] == 1
 assert check["findings"][0]["suppressed"] is True
 PY
 
+if env PATH="$path_value" RUN_MODE=json \
+  PIP_AUDIT_JSON="$tmp_root/pip-audit.json" \
+  PIP_AUDIT_EXIT_CODE=2 \
+  TRIVY_FS_JSON="$tmp_root/trivy-empty.json" \
+  TRIVY_CONFIG_JSON="$tmp_root/trivy-empty.json" \
+  TRIVY_IMAGE_JSON="$tmp_root/trivy-empty.json" \
+  "$script" run --json "$python_repo" >"$tmp_root/run-failed-check.json"; then
+  echo "run --json unexpectedly exited 0 when scanner exited non-zero" >&2
+  exit 1
+fi
+
 echo "run test passed"
