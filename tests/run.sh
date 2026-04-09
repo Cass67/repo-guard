@@ -187,6 +187,21 @@ cat >"$tmp_root/trivy-empty.json" <<'EOF'
   "Results": []
 }
 EOF
+cat >"$tmp_root/trivy-issues.json" <<'EOF'
+{
+  "Results": [
+    {
+      "Target": "Dockerfile",
+      "Misconfigurations": [
+        {
+          "ID": "AVD-DS-0001",
+          "Severity": "HIGH"
+        }
+      ]
+    }
+  ]
+}
+EOF
 
 control_repo="$tmp_root/control-repo"
 mkdir -p "$control_repo"
@@ -301,6 +316,9 @@ check = data["checks"][0]
 assert check["id"] == "pip-audit"
 assert check["suppressed_count"] == 1
 assert check["unsuppressed_count"] == 1
+assert check["new_count"] == 0
+assert check["known_count"] == 0
+assert check["resolved_count"] == 0
 assert check["findings"][0]["suppressed"] is True
 PY
 
@@ -449,6 +467,27 @@ assert "pip-audit" in data["missing_tools"]
 assert any(check["id"] == "trivy-fs" for check in data["checks"])
 PY
 
+if env PATH="$partial_scan_path_value" RUN_MODE=json \
+  TRIVY_FS_JSON="$tmp_root/trivy-empty.json" \
+  TRIVY_CONFIG_JSON="$tmp_root/trivy-issues.json" \
+  TRIVY_IMAGE_JSON="$tmp_root/trivy-empty.json" \
+  "$script" run --json "$mixed_repo" >"$tmp_root/run-partial-scan-with-issues.json"; then
+  echo "run --json unexpectedly exited 0 when a mixed repo missed pip-audit and trivy found issues" >&2
+  exit 1
+fi
+
+python3 - "$tmp_root/run-partial-scan-with-issues.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+assert data["status"] == "error"
+assert "pip-audit" in data["missing_tools"]
+check = next(item for item in data["checks"] if item["id"] == "trivy-config")
+assert check["status"] == "issues"
+PY
+
 if env PATH="$missing_rg_path_value" RUN_MODE=json \
   PIP_AUDIT_JSON="$tmp_root/pip-audit.json" \
   "$script" run --json "$python_repo" \
@@ -568,6 +607,25 @@ if python3 "$repo_root/bin/repo_guard_runtime.py" resolve-run-config \
   exit 1
 fi
 grep -Fq 'audit must be a mapping' "$tmp_root/runtime-invalid-shape.stderr"
+
+cat >"$tmp_root/runtime-nested-warning-config.yaml" <<'EOF'
+version: 1
+scanning:
+  severty: "CRITICAL"
+EOF
+
+python3 "$repo_root/bin/repo_guard_runtime.py" resolve-run-config \
+  "$tmp_root/runtime-nested-warning-config.yaml" >"$tmp_root/runtime-nested-warning-config.json"
+
+python3 - "$tmp_root/runtime-nested-warning-config.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+assert data["severity"] == "HIGH,CRITICAL"
+assert "unknown scanning key: severty" in data["warnings"]
+PY
 
 cat >"$tmp_root/runtime-warning-config.yaml" <<'EOF'
 version: 1

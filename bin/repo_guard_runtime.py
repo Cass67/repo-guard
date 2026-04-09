@@ -65,6 +65,10 @@ def parse_config_file(path: Path) -> ParsedConfig:
     section: str | None = None
     current_suppression: dict[str, Any] | None = None
     current_list_key: str | None = None
+    allowed_section_keys = {
+        "audit": {"exclude", "output_dir", "deep", "baseline_file"},
+        "scanning": {"severity", "image_name"},
+    }
 
     for lineno, raw_line in enumerate(path.read_text().splitlines(), start=1):
         line = raw_line.rstrip()
@@ -122,18 +126,26 @@ def parse_config_file(path: Path) -> ParsedConfig:
                     data.setdefault("audit", {})["exclude"] = []
                     current_list_key = key
                     continue
-                raise ValueError(f"{path}:{lineno}: unsupported config structure")
+                warnings.append(f"unknown {section} key: {key}")
+                current_list_key = "__ignored_nested__"
+                continue
             if ":" not in stripped:
                 raise ValueError(f"{path}:{lineno}: malformed config line")
             key, value = stripped.split(":", 1)
             parsed_value = parse_scalar(value)
             key = key.strip()
+            if key not in allowed_section_keys[section]:
+                warnings.append(f"unknown {section} key: {key}")
+                continue
             if section == "audit" and key == "exclude":
                 if not isinstance(parsed_value, list):
                     raise ValueError(f"{path}:{lineno}: audit.exclude must be a list")
                 data.setdefault("audit", {})[key] = parsed_value
                 continue
             data.setdefault(section, {})[key] = parsed_value
+            continue
+
+        if section in ("audit", "scanning") and current_list_key == "__ignored_nested__" and indent == 4:
             continue
 
         if section == "audit" and current_list_key == "exclude" and indent == 4:
@@ -357,6 +369,9 @@ def build_repo_result(payload: dict[str, Any]) -> dict[str, Any]:
                 "finding_count": len(findings),
                 "unsuppressed_count": unsuppressed_count,
                 "suppressed_count": suppressed_count,
+                "new_count": 0,
+                "known_count": 0,
+                "resolved_count": 0,
                 "warnings": check_warnings,
                 "findings": findings,
                 "resolved_findings": [],
@@ -368,10 +383,10 @@ def build_repo_result(payload: dict[str, Any]) -> dict[str, Any]:
     if checks:
         if any(check["status"] == "error" for check in checks):
             overall_status = "error"
-        elif any(check["status"] == "issues" for check in checks):
-            overall_status = "issues"
         elif missing_tools:
             overall_status = "error"
+        elif any(check["status"] == "issues" for check in checks):
+            overall_status = "issues"
         elif any(check["status"] == "clean" for check in checks):
             overall_status = "clean"
         elif all(check["status"] == "skipped" for check in checks):
