@@ -23,6 +23,7 @@ This phase optimizes for local sweeps under a parent directory like `~/repos`:
 - repo discovery is automatic under the audit root
 - exclusions come from a root `.repo-guard.yaml`
 - scanned repos are never modified, fetched, or pulled
+- bootstrapped repos ignore generated audit artifacts under `/.repo-guard/reports/` by default
 - output is dual-mode by default:
   - terminal summary for the human running the sweep
   - per-repo text logs plus one aggregate JSON summary for later tooling
@@ -145,6 +146,7 @@ Path rules:
 
 - `audit.output_dir` is resolved relative to the audit root when it is not absolute
 - `audit.baseline_file` is resolved relative to the audit root when it is not absolute
+- the default `audit.output_dir` remains `/.repo-guard/reports` relative to the selected audit root
 
 ### Per-Repo Config Responsibilities
 
@@ -304,6 +306,12 @@ Audit writes:
 - `logs/<sanitized-repo-identifier>.log` for each repo
 - `audit-summary.json` as the aggregate machine-readable artifact
 
+Bootstrap defaults:
+
+- `repo-guard` adds `/.repo-guard/reports/` to generated `.gitignore`, `.ignore`, and `.rgignore` templates
+- the default is narrow on purpose: ignore generated reports, not the whole `/.repo-guard/` namespace
+- this keeps future tracked config such as `.repo-guard.yaml` possible while preventing accidental commits of logs and JSON summaries
+
 The terminal output shows only a concise summary:
 
 - total repos scanned
@@ -436,6 +444,7 @@ Add shell tests for:
 - baseline comparison emitting `resolved_findings`
 - audit logs written to the configured output directory
 - non-mutation of scanned repos
+- bootstrap templates including `/.repo-guard/reports/` in `.gitignore`, `.ignore`, and `.rgignore`
 
 Use stub CLIs for:
 
