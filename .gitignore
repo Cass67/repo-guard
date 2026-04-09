@@ -74,6 +74,7 @@ $RECYCLE.BIN/
 .Trash-*/
 .vscode/
 .idea/
+.worktrees/
 *.swp
 *.swo
 *~
