@@ -57,6 +57,7 @@ def parse_config_file(path: Path) -> ParsedConfig:
     warnings: list[str] = []
     section: str | None = None
     current_suppression: dict[str, Any] | None = None
+    current_list_key: str | None = None
 
     for lineno, raw_line in enumerate(path.read_text().splitlines(), start=1):
         line = raw_line.rstrip()
@@ -72,6 +73,7 @@ def parse_config_file(path: Path) -> ParsedConfig:
 
         if indent == 0:
             current_suppression = None
+            current_list_key = None
             section = None
             if stripped.endswith(":"):
                 key = stripped[:-1]
@@ -84,6 +86,7 @@ def parse_config_file(path: Path) -> ParsedConfig:
                     section = "suppressions"
                     continue
                 warnings.append(f"unknown top-level config key: {key}")
+                section = "__ignored_top_level__"
                 continue
             if ":" not in stripped:
                 raise ValueError(f"{path}:{lineno}: malformed config line")
@@ -95,11 +98,28 @@ def parse_config_file(path: Path) -> ParsedConfig:
             data[key] = parse_scalar(value)
             continue
 
+        if section == "__ignored_top_level__":
+            continue
+
         if section in ("audit", "scanning") and indent == 2:
+            current_list_key = None
+            if stripped.endswith(":"):
+                key = stripped[:-1].strip()
+                if section == "audit" and key == "exclude":
+                    data.setdefault("audit", {})["exclude"] = []
+                    current_list_key = key
+                    continue
+                raise ValueError(f"{path}:{lineno}: unsupported config structure")
             if ":" not in stripped:
                 raise ValueError(f"{path}:{lineno}: malformed config line")
             key, value = stripped.split(":", 1)
             data.setdefault(section, {})[key.strip()] = parse_scalar(value)
+            continue
+
+        if section == "audit" and current_list_key == "exclude" and indent == 4:
+            if not stripped.startswith("- "):
+                raise ValueError(f"{path}:{lineno}: malformed list item")
+            data.setdefault("audit", {}).setdefault("exclude", []).append(parse_scalar(stripped[2:]))
             continue
 
         if section == "suppressions":

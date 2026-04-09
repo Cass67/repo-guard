@@ -308,4 +308,46 @@ assert data["repo"]["path"] == sys.argv[2]
 assert data["status"] in ("clean", "skipped")
 PY
 
+cat >"$tmp_root/runtime-supported-config.yaml" <<'EOF'
+version: 1
+audit:
+  exclude:
+    - "archive/**"
+scanning:
+  severity: "CRITICAL"
+EOF
+
+python3 "$repo_root/bin/repo_guard_runtime.py" resolve-run-config \
+  "$tmp_root/runtime-supported-config.yaml" >"$tmp_root/runtime-supported-config.json"
+
+python3 - "$tmp_root/runtime-supported-config.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+assert data["severity"] == "CRITICAL"
+PY
+
+cat >"$tmp_root/runtime-warning-config.yaml" <<'EOF'
+version: 1
+unknown:
+  nested: "value"
+scanning:
+  severity: "CRITICAL"
+EOF
+
+python3 "$repo_root/bin/repo_guard_runtime.py" resolve-run-config \
+  "$tmp_root/runtime-warning-config.yaml" >"$tmp_root/runtime-warning-config.json"
+
+python3 - "$tmp_root/runtime-warning-config.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+assert data["severity"] == "CRITICAL"
+assert "unknown top-level config key: unknown" in data["warnings"]
+PY
+
 echo "run test passed"
