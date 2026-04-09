@@ -1,0 +1,16 @@
+# repo-guard:containers:start
+  - repo: local
+    hooks:
+      - id: trivy-fs
+        name: trivy filesystem scan
+        entry: >-
+          bash -lc 'trivy fs --severity HIGH,CRITICAL --exit-code 1 .'
+        language: system
+        pass_filenames: false
+      - id: trivy-config
+        name: trivy config scan
+        entry: >-
+          bash -lc 'trivy config --severity HIGH,CRITICAL --exit-code 1 .'
+        language: system
+        pass_filenames: false
+# repo-guard:containers:end

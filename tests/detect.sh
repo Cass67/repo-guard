@@ -39,7 +39,8 @@ tmp_container="$tmp_root/container-repo"
 mkdir -p "$tmp_container"
 printf 'FROM python:3.12-slim\n' >"$tmp_container/Dockerfile"
 
-"$script" --detect --check-tools --no-install "$tmp_container" >/tmp/repo-guard-detect-container.out 2>&1 || true
+"$script" --detect --no-install "$tmp_container" >/tmp/repo-guard-detect-container.out
 grep -Fq "detected repo languages: containers" /tmp/repo-guard-detect-container.out
+grep -Fqx "# repo-guard:containers:start" "$tmp_container/.pre-commit-config.yaml"
 
 echo "detect test passed"

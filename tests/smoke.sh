@@ -14,6 +14,10 @@ trap cleanup EXIT
 
 "$script" --help >/dev/null
 "$script" --dry-run --langs python,typescript "$target_repo" >/dev/null
+container_repo="$tmp_root/container-repo"
+mkdir -p "$container_repo"
+printf 'FROM python:3.12-slim\n' >"$container_repo/Dockerfile"
+"$script" --langs containers --no-install "$container_repo" >/dev/null
 mkdir -p "$target_repo"
 printf 'Legacy repo agent note\n' >"$target_repo/AGENTS.md"
 "$script" --langs python,typescript --no-install "$target_repo" >/dev/null
@@ -57,6 +61,7 @@ test -f "$target_repo/.ignore"
 test -f "$target_repo/.rgignore"
 test -f "$target_repo/.gitignore"
 test -f "$target_repo/.pre-commit-config.yaml"
+test -f "$container_repo/.pre-commit-config.yaml"
 
 grep -Fqx "# Security Lockdown Rules" "$target_repo/AGENTS.md"
 grep -Fqx "Legacy repo agent note" "$target_repo/AGENTS_renamed.md"
@@ -65,7 +70,9 @@ grep -Fqx "# Local Tooling" "$target_repo/LOCAL_TOOLING.md"
 grep -Fqx "# repo-guard:base:start" "$target_repo/.pre-commit-config.yaml"
 grep -Fqx "# repo-guard:python:start" "$target_repo/.pre-commit-config.yaml"
 grep -Fqx "# repo-guard:typescript:start" "$target_repo/.pre-commit-config.yaml"
+grep -Fqx "# repo-guard:containers:start" "$container_repo/.pre-commit-config.yaml"
 grep -Fq "id: risky-filenames" "$target_repo/.pre-commit-config.yaml"
+grep -Fq "id: trivy-fs" "$container_repo/.pre-commit-config.yaml"
 grep -Fqx "*env*" "$target_repo/.ignore"
 grep -Fqx "*env*" "$target_repo/.rgignore"
 grep -Fqx "*env*" "$target_repo/.gitignore"

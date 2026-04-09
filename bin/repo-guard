@@ -30,7 +30,7 @@ usage: repo-guard [--langs python,go,...] [--detect] [--yes|--prompt-install|--n
 bootstraps a repo with secret-safe defaults and local pre-commit hooks
 
 supported languages:
-  python, go, bash, rust, c, javascript, typescript, ansible
+  python, go, bash, rust, c, javascript, typescript, ansible, containers
 
 aliases:
   py, js, ts, sh, shell, cpp, cxx

@@ -11,7 +11,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-langs=(python go bash rust c javascript typescript ansible)
+langs=(python go bash rust c javascript typescript ansible containers)
 
 test_repo() {
   local name=$1
@@ -27,7 +27,7 @@ for lang in "${langs[@]}"; do
   test_repo "$lang" "$lang"
 done
 
-test_repo "all-langs" "python,go,bash,rust,c,javascript,typescript,ansible"
+test_repo "all-langs" "python,go,bash,rust,c,javascript,typescript,ansible,containers"
 test_repo "aliases" "py,js,ts,shell,cpp"
 
 echo "language matrix test passed"
