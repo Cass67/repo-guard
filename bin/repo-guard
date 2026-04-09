@@ -1561,9 +1561,26 @@ PY
       rm -rf "$tmp_dir"
       return 1
     fi
+    local final_status
+    local final_exit=1
+    if ! final_status=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$run_json_file"); then
+      rm -rf "$tmp_dir"
+      return 1
+    fi
+    case "$final_status" in
+      clean|skipped)
+        final_exit=0
+        ;;
+      issues|error)
+        final_exit=1
+        ;;
+      *)
+        final_exit=1
+        ;;
+    esac
     cat "$run_json_file"
     rm -rf "$tmp_dir"
-    return "$status"
+    return "$final_exit"
   fi
 
   for lang in "${run_langs[@]:-}"; do

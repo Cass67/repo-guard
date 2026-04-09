@@ -87,6 +87,24 @@ cat >"$tmp_root/pip-audit.json" <<'EOF'
   ]
 }
 EOF
+cat >"$tmp_root/pip-audit-suppressed-only.json" <<'EOF'
+{
+  "dependencies": [
+    {
+      "name": "flask",
+      "version": "3.0.0",
+      "vulns": [
+        {
+          "id": "PYSEC-2026-42",
+          "fix_versions": ["3.0.1"],
+          "aliases": [],
+          "description": "suppressed-only fixture finding"
+        }
+      ]
+    }
+  ]
+}
+EOF
 
 container_repo="$tmp_root/container-repo"
 mkdir -p "$container_repo"
@@ -158,12 +176,15 @@ help_output="$("$script" --help)"
 printf '%s\n' "$help_output" | grep -Fq 'repo-guard run [--json] [--deep] [repo-path]'
 printf '%s\n' "$help_output" | grep -Fq -- '--json             emit one normalized JSON result object to stdout'
 
-env PATH="$path_value" RUN_MODE=json \
+if env PATH="$path_value" RUN_MODE=json \
   PIP_AUDIT_JSON="$tmp_root/pip-audit.json" \
   TRIVY_FS_JSON="$tmp_root/trivy-empty.json" \
   TRIVY_CONFIG_JSON="$tmp_root/trivy-empty.json" \
   TRIVY_IMAGE_JSON="$tmp_root/trivy-empty.json" \
-  "$script" run --json "$python_repo" >"$tmp_root/run.json"
+  "$script" run --json "$python_repo" >"$tmp_root/run.json"; then
+  echo "run --json unexpectedly exited 0 when unsuppressed findings were present" >&2
+  exit 1
+fi
 
 python3 - "$tmp_root/run.json" "$python_repo" <<'PY'
 import json
@@ -179,6 +200,27 @@ assert check["id"] == "pip-audit"
 assert check["suppressed_count"] == 1
 assert check["unsuppressed_count"] == 1
 assert check["findings"][0]["suppressed"] is True
+PY
+
+env PATH="$path_value" RUN_MODE=json \
+  PIP_AUDIT_JSON="$tmp_root/pip-audit-suppressed-only.json" \
+  PIP_AUDIT_EXIT_CODE=1 \
+  TRIVY_FS_JSON="$tmp_root/trivy-empty.json" \
+  TRIVY_CONFIG_JSON="$tmp_root/trivy-empty.json" \
+  TRIVY_IMAGE_JSON="$tmp_root/trivy-empty.json" \
+  "$script" run --json "$python_repo" >"$tmp_root/run-suppressed-only.json"
+
+python3 - "$tmp_root/run-suppressed-only.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+assert data["status"] == "clean"
+check = data["checks"][0]
+assert check["status"] == "clean"
+assert check["suppressed_count"] == 1
+assert check["unsuppressed_count"] == 0
 PY
 
 if env PATH="$path_value" RUN_MODE=json \
