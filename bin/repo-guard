@@ -29,8 +29,7 @@ show_help() {
   cat <<'EOF'
 usage:
   repo-guard [--langs python,go,...] [--detect] [--yes|--prompt-install|--no-install] [--dry-run] [--check-tools] [--git-init] [--upgrade] [repo-path]
-  repo-guard run [--json] [--deep] [repo-path]
-  repo-guard audit [--deep] [--output DIR] [root]
+  repo-guard run [--deep] [repo-path]
 
 bootstrap a repo with secret-safe defaults and local pre-commit hooks,
 or run local dependency/container scans against a target repo
@@ -53,8 +52,6 @@ bootstrap options:
   --help, -h         show this help
 
 run options:
-  --json             emit one normalized JSON result object to stdout
-  --output DIR       write audit logs and audit-summary.json into DIR
   --deep             include Podman image build + Trivy image scan
 
 automatic tool installation is supported on macOS and Linux

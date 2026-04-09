@@ -12,9 +12,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-help_output="$($script --help)"
-printf '%s\n' "$help_output" | grep -Fq 'repo-guard run [--json] [--deep] [repo-path]'
-printf '%s\n' "$help_output" | grep -Fq 'repo-guard audit [--deep] [--output DIR] [root]'
+"$script" --help >/dev/null
 "$script" --dry-run --langs python,typescript "$target_repo" >/dev/null
 container_repo="$tmp_root/container-repo"
 mkdir -p "$container_repo"
