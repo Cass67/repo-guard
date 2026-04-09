@@ -1327,6 +1327,13 @@ append_template_if_missing_header \
   "$template_dir/LOCAL_TOOLING.md" \
   "$repo_root/LOCAL_TOOLING.md" \
   "# Local Tooling"
+if [ ! -f "$repo_root/renovate.json" ]; then
+  if [ "$dry_run" -eq 1 ]; then
+    log_info "would create $repo_root/renovate.json"
+  else
+    cp "$template_dir/renovate.json" "$repo_root/renovate.json"
+  fi
+fi
 ensure_precommit_file "$repo_root/.pre-commit-config.yaml"
 if [ "$upgrade_mode" -eq 1 ]; then
   cleanup_legacy_precommit_blocks "$repo_root/.pre-commit-config.yaml"

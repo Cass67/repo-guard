@@ -24,6 +24,8 @@ printf 'Legacy repo agent note\n' >"$target_repo/AGENTS.md"
 "$script" --langs python,typescript --no-install "$target_repo" >/dev/null
 "$script" --check-tools --langs python >/tmp/repo-guard-check-tools.out 2>/tmp/repo-guard-check-tools.err || true
 "$script" --check-tools --langs containers >/tmp/repo-guard-check-tools-containers.out 2>/tmp/repo-guard-check-tools-containers.err || true
+printf '\n// keep me\n' >>"$target_repo/renovate.json"
+"$script" --langs python,typescript --no-install "$target_repo" >/dev/null
 
 tmp_legacy="$tmp_root/legacy-prettier-block.txt"
 cat >"$tmp_legacy" <<'EOF'
@@ -62,12 +64,14 @@ test -f "$target_repo/.ignore"
 test -f "$target_repo/.rgignore"
 test -f "$target_repo/.gitignore"
 test -f "$target_repo/.pre-commit-config.yaml"
+test -f "$target_repo/renovate.json"
 test -f "$container_repo/.pre-commit-config.yaml"
 
 grep -Fqx "# Security Lockdown Rules" "$target_repo/AGENTS.md"
 grep -Fqx "Legacy repo agent note" "$target_repo/AGENTS_renamed.md"
 grep -Fq "Previous repo-level instructions were preserved at \`AGENTS_renamed.md\`." "$target_repo/AGENTS.md"
 grep -Fqx "# Local Tooling" "$target_repo/LOCAL_TOOLING.md"
+grep -Fq '"config:recommended"' "$target_repo/renovate.json"
 grep -Fqx "## Containers / Supply Chain" "$target_repo/LOCAL_TOOLING.md"
 grep -Fqx "# repo-guard:base:start" "$target_repo/.pre-commit-config.yaml"
 grep -Fqx "# repo-guard:python:start" "$target_repo/.pre-commit-config.yaml"
@@ -95,6 +99,7 @@ fi
 grep -Fq "tool versions:" /tmp/repo-guard-check-tools.out
 grep -Fq "minimum tested" /tmp/repo-guard-check-tools.out
 grep -Fq "trivy" /tmp/repo-guard-check-tools-containers.out
+grep -Fq "// keep me" "$target_repo/renovate.json"
 
 base_count="$(grep -Fc "# repo-guard:base:start" "$target_repo/.pre-commit-config.yaml")"
 python_count="$(grep -Fc "# repo-guard:python:start" "$target_repo/.pre-commit-config.yaml")"
