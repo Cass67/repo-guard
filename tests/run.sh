@@ -7,6 +7,9 @@ script="$repo_root/bin/repo-guard"
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/repo-guard-run.XXXXXX")"
 stub_dir="$tmp_root/stubs"
 missing_tool_dir="$tmp_root/missing-tool-shim"
+missing_rg_dir="$tmp_root/missing-rg-shim"
+missing_python_dir="$tmp_root/missing-python-shim"
+partial_scan_dir="$tmp_root/partial-scan-shim"
 run_log="$tmp_root/run.log"
 path_value="$stub_dir:$PATH"
 
@@ -17,11 +20,25 @@ trap cleanup EXIT
 
 mkdir -p "$stub_dir"
 mkdir -p "$missing_tool_dir"
+mkdir -p "$missing_rg_dir"
+mkdir -p "$missing_python_dir"
+mkdir -p "$partial_scan_dir"
 ln -s "$(command -v python3)" "$missing_tool_dir/python3"
+ln -s "$(command -v python3)" "$missing_rg_dir/python3"
+ln -s "$(command -v python3)" "$partial_scan_dir/python3"
+cat >"$missing_python_dir/python3" <<'EOF'
+#!/usr/bin/env bash
+exit 127
+EOF
 if command -v rg >/dev/null 2>&1; then
   ln -s "$(command -v rg)" "$missing_tool_dir/rg"
+  ln -s "$(command -v rg)" "$missing_python_dir/rg"
+  ln -s "$(command -v rg)" "$partial_scan_dir/rg"
 fi
 missing_path_value="$missing_tool_dir:/usr/bin:/bin:/usr/sbin:/sbin"
+missing_rg_path_value="$missing_rg_dir:/usr/bin:/bin:/usr/sbin:/sbin"
+missing_python_path_value="$missing_python_dir:/usr/bin:/bin:/usr/sbin:/sbin"
+partial_scan_path_value="$partial_scan_dir:/usr/bin:/bin:/usr/sbin:/sbin"
 
 cat >"$stub_dir/trivy" <<'EOF'
 #!/usr/bin/env bash
@@ -57,6 +74,12 @@ printf 'podman %s\n' "$*" >>"$RUN_LOG"
 EOF
 
 chmod +x "$stub_dir/trivy" "$stub_dir/pip-audit" "$stub_dir/podman"
+chmod +x "$missing_python_dir/python3"
+ln -s "$stub_dir/pip-audit" "$missing_rg_dir/pip-audit"
+ln -s "$stub_dir/trivy" "$missing_python_dir/trivy"
+ln -s "$stub_dir/podman" "$missing_python_dir/podman"
+ln -s "$stub_dir/trivy" "$partial_scan_dir/trivy"
+ln -s "$stub_dir/podman" "$partial_scan_dir/podman"
 
 python_repo="$tmp_root/python-repo"
 mkdir -p "$python_repo"
@@ -72,6 +95,21 @@ suppressions:
     tools: ["pip-audit"]
     package: "flask"
     reason: "accepted in test fixture"
+EOF
+single_quoted_repo="$tmp_root/single-quoted-repo"
+mkdir -p "$single_quoted_repo"
+single_quoted_repo="$(cd "$single_quoted_repo" && pwd)"
+printf 'flask==3.0.0\n' >"$single_quoted_repo/requirements.txt"
+cat >"$single_quoted_repo/.repo-guard.yaml" <<'EOF'
+version: 1
+scanning:
+  severity: 'CRITICAL'
+  image_name: 'local/custom:dev'
+suppressions:
+  - id: 'PYSEC-2026-42'
+    tools: ['pip-audit']
+    package: 'flask'
+    reason: 'accepted in single quoted fixture'
 EOF
 cat >"$tmp_root/pip-audit.json" <<'EOF'
 {
@@ -116,11 +154,19 @@ cat >"$tmp_root/pip-audit-suppressed-only.json" <<'EOF'
 }
 EOF
 : >"$tmp_root/pip-audit-empty.json"
+cat >"$tmp_root/pip-audit-array.json" <<'EOF'
+[]
+EOF
 
 container_repo="$tmp_root/container-repo"
 mkdir -p "$container_repo"
 container_repo="$(cd "$container_repo" && pwd)"
 printf 'FROM python:3.12-slim\n' >"$container_repo/Dockerfile"
+mixed_repo="$tmp_root/mixed-repo"
+mkdir -p "$mixed_repo"
+mixed_repo="$(cd "$mixed_repo" && pwd)"
+printf 'flask==3.0.0\n' >"$mixed_repo/requirements.txt"
+printf 'FROM python:3.12-slim\n' >"$mixed_repo/Dockerfile"
 configured_container_repo="$tmp_root/configured-container-repo"
 mkdir -p "$configured_container_repo"
 configured_container_repo="$(cd "$configured_container_repo" && pwd)"
@@ -351,8 +397,11 @@ assert data["repo"]["path"] == sys.argv[2]
 assert data["status"] in ("clean", "skipped")
 PY
 
-env PATH="$missing_path_value" \
-  "$script" run --json "$python_repo" >"$tmp_root/run-missing-tools.json"
+if env PATH="$missing_path_value" \
+  "$script" run --json "$python_repo" >"$tmp_root/run-missing-tools.json"; then
+  echo "run --json unexpectedly exited 0 when pip-audit was missing" >&2
+  exit 1
+fi
 
 python3 - "$tmp_root/run-missing-tools.json" <<'PY'
 import json
@@ -360,9 +409,46 @@ import sys
 from pathlib import Path
 
 data = json.loads(Path(sys.argv[1]).read_text())
-assert data["status"] == "skipped"
+assert data["status"] == "error"
 assert "pip-audit" in data["missing_tools"]
 PY
+
+if env PATH="$partial_scan_path_value" RUN_MODE=json \
+  TRIVY_FS_JSON="$tmp_root/trivy-empty.json" \
+  TRIVY_CONFIG_JSON="$tmp_root/trivy-empty.json" \
+  TRIVY_IMAGE_JSON="$tmp_root/trivy-empty.json" \
+  "$script" run --json "$mixed_repo" >"$tmp_root/run-partial-scan.json"; then
+  echo "run --json unexpectedly exited 0 when a mixed repo missed pip-audit" >&2
+  exit 1
+fi
+
+python3 - "$tmp_root/run-partial-scan.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+assert data["status"] == "error"
+assert "pip-audit" in data["missing_tools"]
+assert any(check["id"] == "trivy-fs" for check in data["checks"])
+PY
+
+if env PATH="$missing_rg_path_value" RUN_MODE=json \
+  PIP_AUDIT_JSON="$tmp_root/pip-audit.json" \
+  "$script" run --json "$python_repo" \
+  >"$tmp_root/run-missing-rg.stdout" 2>"$tmp_root/run-missing-rg.stderr"; then
+  echo "run --json unexpectedly exited 0 when rg was missing" >&2
+  exit 1
+fi
+grep -Fq 'rg is required to detect repo languages for repo-guard run' "$tmp_root/run-missing-rg.stderr"
+
+if env PATH="$missing_python_path_value" RUN_LOG="$run_log" \
+  "$script" run "$container_repo" \
+  >"$tmp_root/run-missing-python.stdout" 2>"$tmp_root/run-missing-python.stderr"; then
+  echo "run unexpectedly exited 0 when python3 was missing" >&2
+  exit 1
+fi
+grep -Fq 'python3 is required for repo-guard run' "$tmp_root/run-missing-python.stderr"
 
 if env PATH="$path_value" \
   "$script" run --json "$malformed_config_repo" \
@@ -376,6 +462,48 @@ if grep -Fq 'Traceback (most recent call last):' "$tmp_root/malformed-config.std
   exit 1
 fi
 grep -Fq 'unsupported indentation' "$tmp_root/malformed-config.stderr"
+
+if env PATH="$path_value" RUN_MODE=json \
+  PIP_AUDIT_JSON="$tmp_root/pip-audit.json" \
+  TRIVY_FS_JSON="$tmp_root/trivy-empty.json" \
+  TRIVY_CONFIG_JSON="$tmp_root/trivy-empty.json" \
+  TRIVY_IMAGE_JSON="$tmp_root/trivy-empty.json" \
+  "$script" run --json "$single_quoted_repo" >"$tmp_root/run-single-quoted.json"; then
+  echo "run --json unexpectedly exited 0 when unsuppressed findings were present in the single-quoted fixture" >&2
+  exit 1
+fi
+
+python3 - "$tmp_root/run-single-quoted.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+check = data["checks"][0]
+assert check["suppressed_count"] == 1
+assert check["unsuppressed_count"] == 1
+PY
+
+if env PATH="$path_value" RUN_MODE=json \
+  PIP_AUDIT_JSON="$tmp_root/pip-audit-array.json" \
+  TRIVY_FS_JSON="$tmp_root/trivy-empty.json" \
+  TRIVY_CONFIG_JSON="$tmp_root/trivy-empty.json" \
+  TRIVY_IMAGE_JSON="$tmp_root/trivy-empty.json" \
+  "$script" run --json "$python_repo" >"$tmp_root/run-invalid-json-shape.json"; then
+  echo "run --json unexpectedly exited 0 for unexpected scanner JSON shape" >&2
+  exit 1
+fi
+
+python3 - "$tmp_root/run-invalid-json-shape.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+assert data["status"] == "error"
+warnings = data["checks"][0]["warnings"]
+assert any("unexpected JSON shape" in warning for warning in warnings)
+PY
 
 cat >"$tmp_root/runtime-supported-config.yaml" <<'EOF'
 version: 1
@@ -397,6 +525,33 @@ from pathlib import Path
 data = json.loads(Path(sys.argv[1]).read_text())
 assert data["severity"] == "CRITICAL"
 PY
+
+cat >"$tmp_root/runtime-invalid-version.yaml" <<'EOF'
+version: 2
+scanning:
+  severity: "CRITICAL"
+EOF
+
+if python3 "$repo_root/bin/repo_guard_runtime.py" resolve-run-config \
+  "$tmp_root/runtime-invalid-version.yaml" \
+  >"$tmp_root/runtime-invalid-version.stdout" 2>"$tmp_root/runtime-invalid-version.stderr"; then
+  echo "resolve-run-config unexpectedly accepted an unsupported config version" >&2
+  exit 1
+fi
+grep -Fq 'unsupported config version: 2' "$tmp_root/runtime-invalid-version.stderr"
+
+cat >"$tmp_root/runtime-invalid-shape.yaml" <<'EOF'
+version: 1
+audit: "oops"
+EOF
+
+if python3 "$repo_root/bin/repo_guard_runtime.py" resolve-run-config \
+  "$tmp_root/runtime-invalid-shape.yaml" \
+  >"$tmp_root/runtime-invalid-shape.stdout" 2>"$tmp_root/runtime-invalid-shape.stderr"; then
+  echo "resolve-run-config unexpectedly accepted an invalid audit shape" >&2
+  exit 1
+fi
+grep -Fq 'audit must be a mapping' "$tmp_root/runtime-invalid-shape.stderr"
 
 cat >"$tmp_root/runtime-warning-config.yaml" <<'EOF'
 version: 1

@@ -1431,6 +1431,17 @@ run_command() {
   fi
 
   target="$(cd "$target" && pwd)"
+
+  if ! tool_exists python3 || ! python3 -c 'pass' >/dev/null 2>&1; then
+    log_warn "python3 is required for repo-guard run"
+    return 1
+  fi
+
+  if ! tool_exists rg; then
+    log_warn "rg is required to detect repo languages for repo-guard run"
+    return 1
+  fi
+
   config_path="$target/.repo-guard.yaml"
 
   if ! settings_json=$(python3 "$script_dir/repo_guard_runtime.py" resolve-run-config "$config_path"); then

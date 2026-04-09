@@ -32,6 +32,13 @@ class ParsedConfig:
 
 def parse_scalar(raw: str):
     raw = raw.strip()
+
+    def strip_quotes(value: str) -> str:
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+            return value[1:-1]
+        return value
+
     if raw == "true":
         return True
     if raw == "false":
@@ -39,9 +46,9 @@ def parse_scalar(raw: str):
     if raw.isdigit():
         return int(raw)
     if raw.startswith("[") and raw.endswith("]"):
-        items = [item.strip().strip('"') for item in raw[1:-1].split(",") if item.strip()]
+        items = [strip_quotes(item) for item in raw[1:-1].split(",") if item.strip()]
         return items
-    return raw.strip('"')
+    return strip_quotes(raw)
 
 
 def finding_key(tool: str, finding_id: str, package_or_target: str | None) -> str:
@@ -92,6 +99,12 @@ def parse_config_file(path: Path) -> ParsedConfig:
                 raise ValueError(f"{path}:{lineno}: malformed config line")
             key, value = stripped.split(":", 1)
             key = key.strip()
+            if key == "audit":
+                raise ValueError(f"{path}:{lineno}: audit must be a mapping")
+            if key == "scanning":
+                raise ValueError(f"{path}:{lineno}: scanning must be a mapping")
+            if key == "suppressions":
+                raise ValueError(f"{path}:{lineno}: suppressions must be a list")
             if key not in ("version",):
                 warnings.append(f"unknown top-level config key: {key}")
                 continue
@@ -113,13 +126,23 @@ def parse_config_file(path: Path) -> ParsedConfig:
             if ":" not in stripped:
                 raise ValueError(f"{path}:{lineno}: malformed config line")
             key, value = stripped.split(":", 1)
-            data.setdefault(section, {})[key.strip()] = parse_scalar(value)
+            parsed_value = parse_scalar(value)
+            key = key.strip()
+            if section == "audit" and key == "exclude":
+                if not isinstance(parsed_value, list):
+                    raise ValueError(f"{path}:{lineno}: audit.exclude must be a list")
+                data.setdefault("audit", {})[key] = parsed_value
+                continue
+            data.setdefault(section, {})[key] = parsed_value
             continue
 
         if section == "audit" and current_list_key == "exclude" and indent == 4:
             if not stripped.startswith("- "):
                 raise ValueError(f"{path}:{lineno}: malformed list item")
-            data.setdefault("audit", {}).setdefault("exclude", []).append(parse_scalar(stripped[2:]))
+            parsed_item = parse_scalar(stripped[2:])
+            if not isinstance(parsed_item, str):
+                raise ValueError(f"{path}:{lineno}: audit.exclude entries must be strings")
+            data.setdefault("audit", {}).setdefault("exclude", []).append(parsed_item)
             continue
 
         if section == "suppressions":
@@ -142,6 +165,11 @@ def parse_config_file(path: Path) -> ParsedConfig:
                 continue
 
         raise ValueError(f"{path}:{lineno}: unsupported config structure")
+
+    if "version" not in data:
+        raise ValueError(f"{path}: missing required config version")
+    if data["version"] != 1:
+        raise ValueError(f"{path}: unsupported config version: {data['version']}")
 
     return ParsedConfig(data, warnings)
 
@@ -284,14 +312,16 @@ def build_repo_result(payload: dict[str, Any]) -> dict[str, Any]:
         else:
             try:
                 document = json.loads(stdout_text)
+                if not isinstance(document, dict):
+                    raise ValueError("scanner output had unexpected JSON shape")
                 if check_id == "pip-audit":
                     findings = normalize_pip_audit(document)
                 else:
                     findings = normalize_trivy(document, check_id)
-            except json.JSONDecodeError:
+            except (ValueError, json.JSONDecodeError):
                 findings = []
                 parse_error = True
-                check_warnings.append("scanner output was not valid JSON")
+                check_warnings.append("scanner output had unexpected JSON shape")
 
         findings = apply_suppressions(findings, merged.get("suppressions", []), check_warnings)
         suppressed_count = sum(1 for item in findings if item.get("suppressed"))
@@ -325,14 +355,19 @@ def build_repo_result(payload: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
+    missing_tools = payload.get("missing_tools", [])
     overall_status = "skipped"
     if checks:
         if any(check["status"] == "error" for check in checks):
             overall_status = "error"
         elif any(check["status"] == "issues" for check in checks):
             overall_status = "issues"
+        elif missing_tools:
+            overall_status = "error"
         else:
             overall_status = "clean"
+    elif missing_tools:
+        overall_status = "error"
 
     return {
         "repo": {
@@ -342,7 +377,7 @@ def build_repo_result(payload: dict[str, Any]) -> dict[str, Any]:
         },
         "status": overall_status,
         "detected": payload.get("detected", []),
-        "missing_tools": payload.get("missing_tools", []),
+        "missing_tools": missing_tools,
         "warnings": repo_warnings,
         "checks": checks,
     }
