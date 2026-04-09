@@ -417,7 +417,7 @@ add_selected_lang() {
   local lang=$1
 
   case "$lang" in
-    python|go|bash|rust|c|javascript|typescript|ansible)
+    python|go|bash|rust|c|javascript|typescript|ansible|containers)
       if ! contains_element "$lang" "${selected_langs[@]:-}"; then
         selected_langs+=("$lang")
       fi
@@ -505,6 +505,10 @@ detect_repo_langs() {
     "inventories/**"; then
     add_detected_lang ansible
   fi
+
+  if repo_has_globs "Dockerfile" "Containerfile" "docker-compose.yml" "docker-compose.yaml" "compose.yml" "compose.yaml"; then
+    add_detected_lang containers
+  fi
 }
 
 detect_existing_precommit_langs() {
@@ -515,7 +519,7 @@ detect_existing_precommit_langs() {
     return
   fi
 
-  for lang in python go bash rust c javascript typescript ansible; do
+  for lang in python go bash rust c javascript typescript ansible containers; do
     if grep -Fqx -- "# repo-guard:$lang:start" "$precommit_file"; then
       add_selected_lang "$lang"
     fi

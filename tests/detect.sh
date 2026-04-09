@@ -35,4 +35,11 @@ if grep -Fqx "# repo-guard:bash:start" "$target_repo/.pre-commit-config.yaml"; t
   exit 1
 fi
 
+tmp_container="$tmp_root/container-repo"
+mkdir -p "$tmp_container"
+printf 'FROM python:3.12-slim\n' >"$tmp_container/Dockerfile"
+
+"$script" --detect --check-tools --no-install "$tmp_container" >/tmp/repo-guard-detect-container.out 2>&1 || true
+grep -Fq "detected repo languages: containers" /tmp/repo-guard-detect-container.out
+
 echo "detect test passed"
