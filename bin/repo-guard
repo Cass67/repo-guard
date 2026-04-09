@@ -582,6 +582,7 @@ collect_required_tools() {
         add_required_tool bandit
         add_required_tool radon
         add_required_tool vulture
+        add_required_tool pip-audit
         ;;
       go)
         add_required_tool go
@@ -614,6 +615,9 @@ collect_required_tools() {
         add_required_tool yamllint
         add_required_tool ansible-lint
         add_required_tool djlint
+        ;;
+      containers)
+        add_required_tool trivy
         ;;
     esac
   done
@@ -657,6 +661,7 @@ minimum_version_for_tool() {
     bandit) printf '1.7.8\n' ;;
     radon) printf '6.0.1\n' ;;
     vulture) printf '2.11\n' ;;
+    pip-audit) printf '2.7.0\n' ;;
     go) printf '1.22.0\n' ;;
     golangci-lint) printf '1.59.0\n' ;;
     shfmt) printf '3.8.0\n' ;;
@@ -670,6 +675,7 @@ minimum_version_for_tool() {
     yamllint) printf '1.35.0\n' ;;
     ansible-lint) printf '24.2.0\n' ;;
     djlint) printf '1.34.0\n' ;;
+    trivy) printf '0.50.0\n' ;;
     *) printf '\n' ;;
   esac
 }
@@ -683,7 +689,7 @@ installed_version_for_tool() {
   local raw=""
 
   case "$tool" in
-    pre-commit|rg|gitleaks|ruff|go|golangci-lint|shfmt|cppcheck|eslint|prettier|tsc|yamllint|ansible-lint|djlint)
+    pre-commit|rg|gitleaks|ruff|go|golangci-lint|shfmt|cppcheck|eslint|prettier|tsc|yamllint|ansible-lint|djlint|pip-audit|trivy)
       raw=$("$tool" --version 2>&1 | head -n 1 || true)
       ;;
     bandit|radon|vulture|cargo|cargo-audit)
@@ -813,10 +819,10 @@ install_node_cli() {
 install_with_brew() {
   local tool=$1
   case "$tool" in
-    pre-commit|rg|gitleaks|ruff|golangci-lint|shfmt|shellcheck|cppcheck|yamllint)
+    pre-commit|rg|gitleaks|ruff|golangci-lint|shfmt|shellcheck|cppcheck|yamllint|trivy)
       brew install "$tool"
       ;;
-    bandit|radon|vulture|ansible-lint|djlint)
+    bandit|radon|vulture|ansible-lint|djlint|pip-audit)
       install_python_cli "$tool"
       ;;
     go)
@@ -868,8 +874,12 @@ install_with_apt() {
       log_warn "install gitleaks manually, then rerun this script."
       return 1
       ;;
-    ruff|bandit|radon|vulture|yamllint|ansible-lint|djlint)
+    ruff|bandit|radon|vulture|yamllint|ansible-lint|djlint|pip-audit)
       install_python_cli "$tool"
+      ;;
+    trivy)
+      log_warn "install trivy manually, then rerun this script."
+      return 1
       ;;
     go)
       sudo apt-get update
@@ -928,8 +938,12 @@ install_with_dnf() {
       log_warn "install gitleaks manually, then rerun this script."
       return 1
       ;;
-    ruff|bandit|radon|vulture|yamllint|ansible-lint|djlint)
+    ruff|bandit|radon|vulture|yamllint|ansible-lint|djlint|pip-audit)
       install_python_cli "$tool"
+      ;;
+    trivy)
+      log_warn "install trivy manually, then rerun this script."
+      return 1
       ;;
     go)
       sudo dnf install -y golang
@@ -982,8 +996,12 @@ install_with_pacman() {
       log_warn "install gitleaks manually, then rerun this script."
       return 1
       ;;
-    ruff|bandit|radon|vulture|yamllint|ansible-lint|djlint)
+    ruff|bandit|radon|vulture|yamllint|ansible-lint|djlint|pip-audit)
       install_python_cli "$tool"
+      ;;
+    trivy)
+      log_warn "install trivy manually, then rerun this script."
+      return 1
       ;;
     go)
       sudo pacman -S --noconfirm go

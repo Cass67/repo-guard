@@ -23,6 +23,7 @@ printf 'Legacy repo agent note\n' >"$target_repo/AGENTS.md"
 "$script" --langs python,typescript --no-install "$target_repo" >/dev/null
 "$script" --langs python,typescript --no-install "$target_repo" >/dev/null
 "$script" --check-tools --langs python >/tmp/repo-guard-check-tools.out 2>/tmp/repo-guard-check-tools.err || true
+"$script" --check-tools --langs containers >/tmp/repo-guard-check-tools-containers.out 2>/tmp/repo-guard-check-tools-containers.err || true
 
 tmp_legacy="$tmp_root/legacy-prettier-block.txt"
 cat >"$tmp_legacy" <<'EOF'
@@ -67,12 +68,16 @@ grep -Fqx "# Security Lockdown Rules" "$target_repo/AGENTS.md"
 grep -Fqx "Legacy repo agent note" "$target_repo/AGENTS_renamed.md"
 grep -Fq "Previous repo-level instructions were preserved at \`AGENTS_renamed.md\`." "$target_repo/AGENTS.md"
 grep -Fqx "# Local Tooling" "$target_repo/LOCAL_TOOLING.md"
+grep -Fqx "## Containers / Supply Chain" "$target_repo/LOCAL_TOOLING.md"
 grep -Fqx "# repo-guard:base:start" "$target_repo/.pre-commit-config.yaml"
 grep -Fqx "# repo-guard:python:start" "$target_repo/.pre-commit-config.yaml"
 grep -Fqx "# repo-guard:typescript:start" "$target_repo/.pre-commit-config.yaml"
 grep -Fqx "# repo-guard:containers:start" "$container_repo/.pre-commit-config.yaml"
 grep -Fq "id: risky-filenames" "$target_repo/.pre-commit-config.yaml"
+grep -Fq "id: pip-audit" "$target_repo/.pre-commit-config.yaml"
 grep -Fq "id: trivy-fs" "$container_repo/.pre-commit-config.yaml"
+grep -Fqx -- "- \`trivy\`" "$target_repo/LOCAL_TOOLING.md"
+grep -Fqx -- "- \`pip-audit\`" "$target_repo/LOCAL_TOOLING.md"
 grep -Fqx "*env*" "$target_repo/.ignore"
 grep -Fqx "*env*" "$target_repo/.rgignore"
 grep -Fqx "*env*" "$target_repo/.gitignore"
@@ -89,6 +94,7 @@ if grep -Fq "name: stale ruff check" "$target_repo/.pre-commit-config.yaml"; the
 fi
 grep -Fq "tool versions:" /tmp/repo-guard-check-tools.out
 grep -Fq "minimum tested" /tmp/repo-guard-check-tools.out
+grep -Fq "trivy" /tmp/repo-guard-check-tools-containers.out
 
 base_count="$(grep -Fc "# repo-guard:base:start" "$target_repo/.pre-commit-config.yaml")"
 python_count="$(grep -Fc "# repo-guard:python:start" "$target_repo/.pre-commit-config.yaml")"

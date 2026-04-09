@@ -36,8 +36,9 @@ chmod +x "$stub_dir/brew" "$stub_dir/python3" "$stub_dir/pipx"
 
 run_case() {
   local case_name=$1
-  local virtual_env=${2:-}
-  local use_pipx=${3:-no}
+  local langs_csv=$2
+  local virtual_env=${3:-}
+  local use_pipx=${4:-no}
   local repo="$tmp_root/$case_name-repo"
   local log_file="$tmp_root/$case_name.log"
   local path_value="$stub_dir:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -57,19 +58,19 @@ run_case() {
       PATH="$path_value" \
       REPO_GUARD_INSTALL_LOG="$log_file" \
       VIRTUAL_ENV="$virtual_env" \
-      "$script" --langs ansible --yes "$repo" >/dev/null
+      "$script" --langs "$langs_csv" --yes "$repo" >/dev/null
   else
     env \
       -u VIRTUAL_ENV \
       PATH="$path_value" \
       REPO_GUARD_INSTALL_LOG="$log_file" \
-      "$script" --langs ansible --yes "$repo" >/dev/null
+      "$script" --langs "$langs_csv" --yes "$repo" >/dev/null
   fi
 
   printf '%s\n' "$log_file"
 }
 
-venv_log="$(run_case venv "$tmp_root/fake-venv")"
+venv_log="$(run_case venv ansible "$tmp_root/fake-venv")"
 grep -Fq 'python3 -m pip install ansible-lint' "$venv_log"
 grep -Fq 'python3 -m pip install djlint' "$venv_log"
 if grep -Fq -- '--user' "$venv_log"; then
@@ -77,7 +78,7 @@ if grep -Fq -- '--user' "$venv_log"; then
   exit 1
 fi
 
-venv_pipx_log="$(run_case venv-pipx "$tmp_root/fake-venv" yes)"
+venv_pipx_log="$(run_case venv-pipx ansible "$tmp_root/fake-venv" yes)"
 grep -Fq 'python3 -m pip install ansible-lint' "$venv_pipx_log"
 grep -Fq 'python3 -m pip install djlint' "$venv_pipx_log"
 if grep -Fq 'pipx install' "$venv_pipx_log"; then
@@ -85,9 +86,19 @@ if grep -Fq 'pipx install' "$venv_pipx_log"; then
   exit 1
 fi
 
-plain_log="$(run_case plain)"
+plain_log="$(run_case plain ansible)"
 grep -Fq 'python3 -m pip install --user ansible-lint' "$plain_log"
 grep -Fq 'python3 -m pip install --user djlint' "$plain_log"
 grep -Fq 'brew install yamllint' "$plain_log"
+
+python_plain_log="$(run_case python-plain python)"
+grep -Fq 'python3 -m pip install --user pip-audit' "$python_plain_log"
+
+python_venv_log="$(run_case python-venv python "$tmp_root/fake-venv")"
+grep -Fq 'python3 -m pip install pip-audit' "$python_venv_log"
+if grep -Fq -- '--user' "$python_venv_log"; then
+  echo "python virtualenv install unexpectedly used --user" >&2
+  exit 1
+fi
 
 echo "install python cli test passed"
