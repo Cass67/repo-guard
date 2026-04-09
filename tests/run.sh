@@ -105,11 +105,22 @@ cat >"$tmp_root/pip-audit-suppressed-only.json" <<'EOF'
   ]
 }
 EOF
+: >"$tmp_root/pip-audit-empty.json"
 
 container_repo="$tmp_root/container-repo"
 mkdir -p "$container_repo"
 container_repo="$(cd "$container_repo" && pwd)"
 printf 'FROM python:3.12-slim\n' >"$container_repo/Dockerfile"
+configured_container_repo="$tmp_root/configured-container-repo"
+mkdir -p "$configured_container_repo"
+configured_container_repo="$(cd "$configured_container_repo" && pwd)"
+printf 'FROM alpine:3.20\n' >"$configured_container_repo/Dockerfile"
+cat >"$configured_container_repo/.repo-guard.yaml" <<'EOF'
+version: 1
+scanning:
+  severity: "CRITICAL"
+  image_name: "local/custom:dev"
+EOF
 cat >"$tmp_root/trivy-empty.json" <<'EOF'
 {
   "Results": []
@@ -151,6 +162,18 @@ env PATH="$path_value" RUN_LOG="$run_log" \
   "$script" run --deep "$container_repo" >/dev/null
 grep -Fq "podman build -t local/repo-guard:dev -f $container_repo/Dockerfile $container_repo" "$run_log"
 grep -Fq 'trivy image --severity HIGH,CRITICAL --exit-code 1 local/repo-guard:dev' "$run_log"
+
+: >"$run_log"
+env PATH="$path_value" RUN_LOG="$run_log" \
+  "$script" run "$configured_container_repo" >/dev/null
+grep -Fq "trivy fs --severity CRITICAL --exit-code 1 $configured_container_repo" "$run_log"
+grep -Fq "trivy config --severity CRITICAL --exit-code 1 $configured_container_repo" "$run_log"
+
+: >"$run_log"
+env PATH="$path_value" RUN_LOG="$run_log" \
+  "$script" run --deep "$configured_container_repo" >/dev/null
+grep -Fq "podman build -t local/custom:dev -f $configured_container_repo/Dockerfile $configured_container_repo" "$run_log"
+grep -Fq 'trivy image --severity CRITICAL --exit-code 1 local/custom:dev' "$run_log"
 
 : >"$run_log"
 (
@@ -242,6 +265,30 @@ from pathlib import Path
 data = json.loads(Path(sys.argv[1]).read_text())
 assert data["status"] == "error"
 assert data["checks"][0]["status"] == "error"
+PY
+
+if env PATH="$path_value" RUN_MODE=json \
+  PIP_AUDIT_JSON="$tmp_root/pip-audit-empty.json" \
+  PIP_AUDIT_EXIT_CODE=2 \
+  TRIVY_FS_JSON="$tmp_root/trivy-empty.json" \
+  TRIVY_CONFIG_JSON="$tmp_root/trivy-empty.json" \
+  TRIVY_IMAGE_JSON="$tmp_root/trivy-empty.json" \
+  "$script" run --json "$python_repo" >"$tmp_root/run-silent-failed-check.json"; then
+  echo "run --json unexpectedly exited 0 when scanner failed silently" >&2
+  exit 1
+fi
+
+python3 - "$tmp_root/run-silent-failed-check.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+assert data["status"] == "error"
+check = data["checks"][0]
+assert check["id"] == "pip-audit"
+assert check["status"] == "error"
+assert check["finding_count"] == 0
 PY
 
 env PATH="$path_value" RUN_MODE=json \
