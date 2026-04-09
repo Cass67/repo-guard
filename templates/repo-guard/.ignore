@@ -56,6 +56,7 @@ Library/Application Support/Firefox/
 history.jsonl
 sessions/
 log/
+/.repo-guard/reports/
 
 # OS and editor workspace noise.
 .DS_Store

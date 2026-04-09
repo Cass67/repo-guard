@@ -12,7 +12,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"$script" --help >/dev/null
+help_output="$($script --help)"
+printf '%s\n' "$help_output" | grep -Fq 'repo-guard run [--json] [--deep] [repo-path]'
+printf '%s\n' "$help_output" | grep -Fq 'repo-guard audit [--deep] [--output DIR] [root]'
 "$script" --dry-run --langs python,typescript "$target_repo" >/dev/null
 container_repo="$tmp_root/container-repo"
 mkdir -p "$container_repo"
@@ -85,6 +87,9 @@ grep -Fqx -- "- \`pip-audit\`" "$target_repo/LOCAL_TOOLING.md"
 grep -Fqx "*env*" "$target_repo/.ignore"
 grep -Fqx "*env*" "$target_repo/.rgignore"
 grep -Fqx "*env*" "$target_repo/.gitignore"
+grep -Fqx "/.repo-guard/reports/" "$target_repo/.gitignore"
+grep -Fqx "/.repo-guard/reports/" "$target_repo/.ignore"
+grep -Fqx "/.repo-guard/reports/" "$target_repo/.rgignore"
 grep -Fq "|*env*|" "$target_repo/.pre-commit-config.yaml"
 grep -Fq "\$VIRTUAL_ENV/bin/ruff" "$target_repo/.pre-commit-config.yaml"
 grep -Fq "./.venv/bin/ruff" "$target_repo/.pre-commit-config.yaml"
