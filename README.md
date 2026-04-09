@@ -1,12 +1,13 @@
 # repo-guard
 
-`repo-guard` bootstraps a repository with secret-safe defaults and local `pre-commit` hooks.
+`repo-guard` bootstraps a repository with secret-safe defaults and local `pre-commit` hooks, and it can run local dependency/container scans against an existing repo.
 
 It installs or merges:
 
 - `AGENTS.md` with security-handling rules
 - `.ignore`, `.rgignore`, and `.gitignore` entries for secret-bearing files plus common OS/editor junk
 - `LOCAL_TOOLING.md` documenting required local CLIs
+- `renovate.json` with a host-agnostic dependency/base-image update baseline
 - `.pre-commit-config.yaml` assembled from base and language-specific hook fragments
 
 The tool is designed for multi-agent development across macOS and Linux: give CLI assistants and editor-integrated coding tools a repo-local security baseline, then add language-specific quality gates before code lands in git.
@@ -17,6 +18,7 @@ Reruns are idempotent: the script appends only missing lines and avoids duplicat
 
 ```sh
 bin/repo-guard [--langs python,go,...] [--detect] [--yes|--prompt-install|--no-install] [--dry-run] [--check-tools] [--git-init] [--upgrade] [repo-path]
+bin/repo-guard run [--deep] [repo-path]
 ```
 
 Examples:
@@ -28,14 +30,19 @@ bin/repo-guard --langs go,rust --yes ~/src/my-repo
 bin/repo-guard --langs js,ts --no-install ~/src/my-repo
 bin/repo-guard --langs python,go --dry-run ~/src/my-repo
 bin/repo-guard --detect ~/src/existing-repo
+bin/repo-guard --detect ~/src/existing-container-repo
 bin/repo-guard --detect --langs python ~/src/existing-repo
+bin/repo-guard --langs python,containers ~/src/my-service
 bin/repo-guard --langs rust --check-tools
+bin/repo-guard --check-tools --langs containers
 bin/repo-guard --detect --check-tools ~/src/existing-repo
 bin/repo-guard --langs python --git-init ~/src/my-repo
 bin/repo-guard --langs python,typescript --upgrade ~/src/existing-repo
+bin/repo-guard run
+bin/repo-guard run --deep
 ```
 
-If `repo-path` is omitted, the current working directory is used.
+If `repo-path` is omitted, the current working directory is used in both bootstrap mode and `run` mode.
 
 ### Shell Alias
 
@@ -70,6 +77,8 @@ Important behavior changes:
 - `--detect` scans an existing repo with normal ignore boundaries and infers supported languages from filenames and common manifests
 - `--git-init` initializes a Git repository when `.git` is missing
 - `--upgrade` refreshes existing `repo-guard` managed pre-commit blocks to the current templates
+- `run` executes local Python/container scans without mutating the target repo
+- `run --deep` is the only path that requires `podman` in this MVP
 
 ## Supported Languages
 
@@ -81,6 +90,7 @@ Important behavior changes:
 - `javascript`
 - `typescript`
 - `ansible`
+- `containers`
 
 Aliases:
 
@@ -104,6 +114,7 @@ Current heuristics include:
 - JavaScript: `*.js`, `*.jsx`, `package.json`
 - TypeScript: `*.ts`, `*.tsx`, `*.mts`, `*.cts`, `tsconfig.json`
 - Ansible: `ansible.cfg`, `*.j2`, `*.jinja2`, and common paths such as `playbooks/`, `roles/`, `group_vars/`, `host_vars/`, `inventories/`
+- Containers: `Dockerfile`, `Containerfile`, `docker-compose.yml`, `docker-compose.yaml`, `compose.yml`, `compose.yaml`
 
 You can combine `--detect` with `--langs` when you want auto-detection plus an explicit override or extra language.
 
@@ -115,6 +126,7 @@ The script copies or merges these templates into the target repo:
 
 - [`templates/repo-guard/AGENTS.md`](templates/repo-guard/AGENTS.md)
 - [`templates/repo-guard/LOCAL_TOOLING.md`](templates/repo-guard/LOCAL_TOOLING.md)
+- [`templates/repo-guard/renovate.json`](templates/repo-guard/renovate.json)
 - [`templates/repo-guard/.ignore`](templates/repo-guard/.ignore)
 - [`templates/repo-guard/.rgignore`](templates/repo-guard/.rgignore)
 - [`templates/repo-guard/.gitignore`](templates/repo-guard/.gitignore)
@@ -138,7 +150,7 @@ Base hooks currently include:
 
 Language fragments add local hooks for the selected ecosystems:
 
-- Python: prefers tools from an active `$VIRTUAL_ENV`, then `./.venv/bin`, then `./venv/bin` for `ruff`, `bandit`, `radon`, `vulture`, then falls back to global CLIs
+- Python: prefers tools from an active `$VIRTUAL_ENV`, then `./.venv/bin`, then `./venv/bin` for `ruff`, `bandit`, `radon`, `vulture`, `pip-audit`, then falls back to global CLIs
 - Go: `gofmt`, `goimports`, `go vet`, `golangci-lint`, `govulncheck`
 - Bash: `shfmt`, `shellcheck`, `bash -n`
 - Rust: `cargo fmt`, `cargo clippy`, `cargo audit`
@@ -146,6 +158,15 @@ Language fragments add local hooks for the selected ecosystems:
 - Ansible: `yamllint` for YAML, `ansible-lint` for playbooks and roles, and `djlint` for Jinja2 templates
 - JavaScript: prefers `./node_modules/.bin/eslint` and `./node_modules/.bin/prettier`, then falls back to global CLIs
 - TypeScript: prefers `./node_modules/.bin/eslint`, `./node_modules/.bin/prettier`, and `./node_modules/.bin/tsc`, then falls back to global CLIs
+- Containers: `trivy fs` and `trivy config` against the repo tree
+
+## Runtime Scans
+
+`repo-guard run` reuses the same repo detection rules as `--detect`, but it does not write or modify repo files.
+
+- Python repos: runs `pip-audit` against `requirements.txt` or `pyproject.toml`
+- Container repos: runs `trivy fs` and `trivy config`
+- `run --deep`: adds `podman build` plus `trivy image`
 
 ## Tool Installation
 
@@ -167,6 +188,7 @@ Automatic installation is supported on:
 
 Some tools still require manual installation on some platforms. The script prints those cases explicitly.
 The current minimum tested versions are documented in [`templates/repo-guard/LOCAL_TOOLING.md`](templates/repo-guard/LOCAL_TOOLING.md).
+For the container/runtime flow, `trivy` is part of the normal local tool baseline and `podman` is optional unless you use `bin/repo-guard run --deep`.
 
 ## Other Side Effects
 
@@ -187,10 +209,14 @@ The repository now includes:
 - [`tests/smoke.sh`](tests/smoke.sh) for `--help`, `--dry-run`, git initialization, and idempotent reruns
 - [`tests/detect.sh`](tests/detect.sh) for mixed-language detection on an existing repo
 - [`tests/language-matrix.sh`](tests/language-matrix.sh) for generated config validation across every supported language plus alias coverage
-- [`.github/workflows/ci.yml`](.github/workflows/ci.yml) to run `shellcheck` and both test scripts on macOS and Linux
+- [`tests/install-python-cli.sh`](tests/install-python-cli.sh) for Python CLI install behavior
+- [`tests/run.sh`](tests/run.sh) for `repo-guard run` and `run --deep` using stub CLIs
 
 Useful manual checks are still:
 
 - `bin/repo-guard --check-tools --langs python`
+- `bin/repo-guard --check-tools --langs containers`
+- `bin/repo-guard run`
+- `bin/repo-guard run --deep`
 - inspecting the generated files and `.pre-commit-config.yaml`
 - linting [`bin/repo-guard`](bin/repo-guard) with `shellcheck` when available

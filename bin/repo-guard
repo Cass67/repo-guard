@@ -27,9 +27,12 @@ detected_langs=()
 
 show_help() {
   cat <<'EOF'
-usage: repo-guard [--langs python,go,...] [--detect] [--yes|--prompt-install|--no-install] [--dry-run] [--check-tools] [--git-init] [--upgrade] [repo-path]
+usage:
+  repo-guard [--langs python,go,...] [--detect] [--yes|--prompt-install|--no-install] [--dry-run] [--check-tools] [--git-init] [--upgrade] [repo-path]
+  repo-guard run [--deep] [repo-path]
 
-bootstraps a repo with secret-safe defaults and local pre-commit hooks
+bootstrap a repo with secret-safe defaults and local pre-commit hooks,
+or run local dependency/container scans against a target repo
 
 supported languages:
   python, go, bash, rust, c, javascript, typescript, ansible, containers
@@ -37,7 +40,7 @@ supported languages:
 aliases:
   py, js, ts, sh, shell, cpp, cxx
 
-options:
+bootstrap options:
   --yes              install missing tools automatically when supported
   --prompt-install   prompt before installing missing tools
   --no-install       report missing tools without installing them (default)
@@ -47,6 +50,9 @@ options:
   --git-init         run git init when the target repo is not already a Git repository
   --upgrade          replace existing repo-guard managed pre-commit blocks with current templates
   --help, -h         show this help
+
+run options:
+  --deep             include Podman image build + Trivy image scan
 
 automatic tool installation is supported on macOS and Linux
 EOF
@@ -1115,6 +1121,7 @@ apply_file_permissions() {
   for file in \
     "$repo_root/AGENTS.md" \
     "$repo_root/LOCAL_TOOLING.md" \
+    "$repo_root/renovate.json" \
     "$repo_root/.ignore" \
     "$repo_root/.rgignore" \
     "$repo_root/.gitignore" \
