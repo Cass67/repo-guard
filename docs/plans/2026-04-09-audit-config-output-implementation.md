@@ -46,22 +46,17 @@
 - Add `warnings: []` arrays to repo/check JSON objects. Use those arrays to surface expired suppressions and unknown top-level config keys because the spec requires warnings in JSON but does not yet pin the field name.
 - Treat malformed config or internal processing failures as audit exit code `2`; keep `run` on the existing `0/1` model.
 
-### Task 1: Add Default Report Ignores and CLI Help Coverage
+### Task 1: Add Default Report Ignores
 
 **Files:**
 - Modify: `tests/smoke.sh`
 - Modify: `templates/repo-guard/.gitignore`
 - Modify: `templates/repo-guard/.ignore`
 - Modify: `templates/repo-guard/.rgignore`
-- Modify: `bin/repo-guard:28-58`
 
-- [ ] **Step 1: Extend `tests/smoke.sh` with failing assertions for help text and ignore defaults**
+- [ ] **Step 1: Extend `tests/smoke.sh` with failing assertions for ignore defaults**
 
 ```bash
-help_output="$("$script" --help)"
-printf '%s\n' "$help_output" | grep -Fq 'repo-guard run [--json] [--deep] [repo-path]'
-printf '%s\n' "$help_output" | grep -Fq 'repo-guard audit [--deep] [--output DIR] [root]'
-
 grep -Fqx "/.repo-guard/reports/" "$target_repo/.gitignore"
 grep -Fqx "/.repo-guard/reports/" "$target_repo/.ignore"
 grep -Fqx "/.repo-guard/reports/" "$target_repo/.rgignore"
@@ -70,7 +65,7 @@ grep -Fqx "/.repo-guard/reports/" "$target_repo/.rgignore"
 - [ ] **Step 2: Run the smoke test to verify it fails first**
 
 Run: `bash tests/smoke.sh`
-Expected: FAIL on missing help text and missing `/.repo-guard/reports/` lines.
+Expected: FAIL on missing `/.repo-guard/reports/` lines.
 
 - [ ] **Step 3: Add the default ignore line to all three templates**
 
@@ -80,33 +75,18 @@ Expected: FAIL on missing help text and missing `/.repo-guard/reports/` lines.
 
 Place it once in each hidden template near the other generated/local-artifact exclusions.
 
-- [ ] **Step 4: Update `show_help()` with the new command surface**
-
-```text
-  repo-guard run [--json] [--deep] [repo-path]
-  repo-guard audit [--deep] [--output DIR] [root]
-```
-
-Add one-line option help for:
-
-```text
-  --json             emit one normalized JSON result object to stdout
-  --output DIR       write audit logs and audit-summary.json into DIR
-```
-
-- [ ] **Step 5: Re-run the smoke test**
+- [ ] **Step 4: Re-run the smoke test**
 
 Run: `bash tests/smoke.sh`
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add tests/smoke.sh \
   templates/repo-guard/.gitignore \
   templates/repo-guard/.ignore \
-  templates/repo-guard/.rgignore \
-  bin/repo-guard
+  templates/repo-guard/.rgignore
 git commit -m "chore: ignore repo-guard audit reports by default"
 ```
 
@@ -114,6 +94,7 @@ git commit -m "chore: ignore repo-guard audit reports by default"
 
 **Files:**
 - Create: `bin/repo_guard_runtime.py`
+- Modify: `bin/repo-guard:28-58`
 - Modify: `bin/repo-guard:5-27`
 - Modify: `bin/repo-guard:61-83`
 - Modify: `bin/repo-guard:1216-1440`
@@ -185,6 +166,14 @@ assert check["suppressed_count"] == 1
 assert check["unsuppressed_count"] == 1
 assert check["findings"][0]["suppressed"] is True
 PY
+```
+
+Also assert the help text reflects the implemented `run --json` surface:
+
+```bash
+help_output="$("$script" --help)"
+printf '%s\n' "$help_output" | grep -Fq 'repo-guard run [--json] [--deep] [repo-path]'
+printf '%s\n' "$help_output" | grep -Fq -- '--json             emit one normalized JSON result object to stdout'
 ```
 
 - [ ] **Step 2: Run the run test to verify it fails first**
@@ -300,6 +289,18 @@ trivy image --format json --severity "$severity" --exit-code 1 "$image_name"
 - build the final repo object through `bin/repo_guard_runtime.py`
 - print JSON to stdout only when `run_json=1`
 
+Update `show_help()` in the same task so the documented `run --json` usage is truthful:
+
+```text
+  repo-guard run [--json] [--deep] [repo-path]
+```
+
+and:
+
+```text
+  --json             emit one normalized JSON result object to stdout
+```
+
 - [ ] **Step 5: Re-run the run test**
 
 Run: `bash tests/run.sh`
@@ -315,6 +316,7 @@ git commit -m "feat: add structured run output with repo-local config"
 ### Task 3: Add `repo-guard audit` Discovery, Layered Config, and Report Writing
 
 **Files:**
+- Modify: `bin/repo-guard:28-58`
 - Modify: `bin/repo-guard:5-27`
 - Modify: `bin/repo-guard:1194-1560`
 - Modify: `bin/repo_guard_runtime.py`
@@ -359,6 +361,8 @@ Assert:
 - `logs/alpha.log` and `logs/beta.log` exist
 - no report files are written inside the scanned repos
 - no `git` command is invoked during the sweep
+- help text includes `repo-guard audit [--deep] [--output DIR] [root]`
+- help text includes `--output DIR       write audit logs and audit-summary.json into DIR`
 
 Use a stub `git` that records invocations and assert the log stays empty.
 
@@ -382,6 +386,18 @@ fi
 ```
 
 Add `--output DIR` handling only for `audit`.
+
+Update `show_help()` in the same task so the documented audit surface is truthful:
+
+```text
+  repo-guard audit [--deep] [--output DIR] [root]
+```
+
+and:
+
+```text
+  --output DIR       write audit logs and audit-summary.json into DIR
+```
 
 - [ ] **Step 4: Implement repo discovery and per-repo execution**
 
