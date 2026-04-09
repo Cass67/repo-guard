@@ -52,6 +52,11 @@ if [ "${RUN_MODE:-text}" = "json" ]; then
   exit "${TRIVY_EXIT_CODE:-0}"
 fi
 printf 'trivy %s\n' "$*" >>"$RUN_LOG"
+case "$1" in
+  fs) exit "${TRIVY_FS_EXIT_CODE:-0}" ;;
+  config) exit "${TRIVY_CONFIG_EXIT_CODE:-0}" ;;
+  image) exit "${TRIVY_IMAGE_EXIT_CODE:-0}" ;;
+esac
 EOF
 
 cat >"$stub_dir/pip-audit" <<'EOF'
@@ -224,6 +229,14 @@ grep -Fq "trivy fs --severity HIGH,CRITICAL --exit-code 1 $container_repo" "$run
 grep -Fq "trivy config --severity HIGH,CRITICAL --exit-code 1 $container_repo" "$run_log"
 
 : >"$run_log"
+if env PATH="$path_value" RUN_LOG="$run_log" \
+  TRIVY_FS_EXIT_CODE=1 TRIVY_CONFIG_EXIT_CODE=0 \
+  "$script" run "$container_repo" >/dev/null; then
+  echo "container run unexpectedly exited 0 when trivy fs failed" >&2
+  exit 1
+fi
+
+: >"$run_log"
 env PATH="$path_value" RUN_LOG="$run_log" \
   "$script" run --deep "$container_repo" >/dev/null
 grep -Fq "podman build -t local/repo-guard:dev -f $container_repo/Dockerfile $container_repo" "$run_log"
@@ -394,7 +407,10 @@ from pathlib import Path
 
 data = json.loads(Path(sys.argv[1]).read_text())
 assert data["repo"]["path"] == sys.argv[2]
-assert data["status"] in ("clean", "skipped")
+assert data["status"] == "skipped"
+check = data["checks"][0]
+assert check["id"] == "pip-audit"
+assert check["status"] == "skipped"
 PY
 
 if env PATH="$missing_path_value" \

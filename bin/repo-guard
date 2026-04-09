@@ -1294,7 +1294,11 @@ run_python_checks() {
   fi
 
   if [ "$json_mode" -eq 1 ]; then
-    printf '%s\n' "no Python dependency manifest found, skipping pip-audit" >&2
+    if [ -n "$stderr_file" ]; then
+      printf '%s\n' "no Python dependency manifest found, skipping pip-audit" >"$stderr_file"
+    else
+      printf '%s\n' "no Python dependency manifest found, skipping pip-audit" >&2
+    fi
   else
     log_info "no Python dependency manifest found, skipping pip-audit"
   fi
@@ -1332,8 +1336,9 @@ run_container_checks() {
     return "$status"
   fi
 
-  trivy fs --severity "$severity" --exit-code 1 "$target"
-  trivy config --severity "$severity" --exit-code 1 "$target"
+  trivy fs --severity "$severity" --exit-code 1 "$target" || status=1
+  trivy config --severity "$severity" --exit-code 1 "$target" || status=1
+  return "$status"
 }
 
 run_container_deep() {
@@ -1474,6 +1479,7 @@ run_command() {
     local exit_code
     local detected_serialized
     local missing_serialized
+    local check_state
     tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/repo-guard-run-json.XXXXXX")
     checks_file="$tmp_dir/checks.txt"
     payload_file="$tmp_dir/payload.json"
@@ -1496,8 +1502,12 @@ run_command() {
             exit_code=$?
             status=1
           fi
+          check_state="observed"
+          if [ "$exit_code" -eq 0 ] && [ ! -s "$pip_stdout" ] && [ -s "$pip_stderr" ]; then
+            check_state="skipped"
+          fi
           if [ "$exit_code" -ne 0 ] || [ -s "$pip_stdout" ] || [ -s "$pip_stderr" ]; then
-            printf '%s|%s|%s|%s\n' "pip-audit" "$exit_code" "$pip_stdout" "$pip_stderr" >>"$checks_file"
+            printf '%s|%s|%s|%s|%s\n' "pip-audit" "$exit_code" "$pip_stdout" "$pip_stderr" "$check_state" >>"$checks_file"
           fi
           ;;
         containers)
@@ -1521,10 +1531,10 @@ run_command() {
             status=1
           fi
           if [ "$container_fs_exit" -ne 0 ] || [ -s "$fs_stdout" ] || [ -s "$fs_stderr" ]; then
-            printf '%s|%s|%s|%s\n' "trivy-fs" "$container_fs_exit" "$fs_stdout" "$fs_stderr" >>"$checks_file"
+            printf '%s|%s|%s|%s|%s\n' "trivy-fs" "$container_fs_exit" "$fs_stdout" "$fs_stderr" "observed" >>"$checks_file"
           fi
           if [ "$container_config_exit" -ne 0 ] || [ -s "$config_stdout" ] || [ -s "$config_stderr" ]; then
-            printf '%s|%s|%s|%s\n' "trivy-config" "$container_config_exit" "$config_stdout" "$config_stderr" >>"$checks_file"
+            printf '%s|%s|%s|%s|%s\n' "trivy-config" "$container_config_exit" "$config_stdout" "$config_stderr" "observed" >>"$checks_file"
           fi
           if [ "$run_deep" -eq 1 ]; then
             image_stdout="$tmp_dir/trivy-image.stdout"
@@ -1541,10 +1551,10 @@ run_command() {
               status=1
             fi
             if [ "$container_build_exit" -ne 0 ]; then
-              printf '%s|%s|%s|%s\n' "podman-build" "$container_build_exit" "$build_stdout" "$build_stderr" >>"$checks_file"
+              printf '%s|%s|%s|%s|%s\n' "podman-build" "$container_build_exit" "$build_stdout" "$build_stderr" "observed" >>"$checks_file"
             fi
             if [ "$container_image_exit" -ne 0 ] || [ -s "$image_stdout" ] || [ -s "$image_stderr" ]; then
-              printf '%s|%s|%s|%s\n' "trivy-image" "$container_image_exit" "$image_stdout" "$image_stderr" >>"$checks_file"
+              printf '%s|%s|%s|%s|%s\n' "trivy-image" "$container_image_exit" "$image_stdout" "$image_stderr" "observed" >>"$checks_file"
             fi
           fi
           ;;
@@ -1575,13 +1585,14 @@ checks = []
 for line in checks_file.read_text().splitlines():
     if not line.strip():
         continue
-    check_id, exit_code, stdout_path, stderr_path = line.split("|", 3)
+    check_id, exit_code, stdout_path, stderr_path, state = line.split("|", 4)
     checks.append(
         {
             "id": check_id,
             "exit_code": int(exit_code),
             "stdout_path": stdout_path,
             "stderr_path": stderr_path,
+            "state": state,
         }
     )
 payload = {

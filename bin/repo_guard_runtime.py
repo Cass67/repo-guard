@@ -296,6 +296,7 @@ def build_repo_result(payload: dict[str, Any]) -> dict[str, Any]:
     for check_payload in payload.get("checks", []):
         check_warnings: list[str] = []
         check_id = check_payload["id"]
+        check_state = check_payload.get("state", "observed")
         stdout_text = ""
         stderr_text = ""
         if check_payload.get("stdout_path"):
@@ -303,9 +304,15 @@ def build_repo_result(payload: dict[str, Any]) -> dict[str, Any]:
         if check_payload.get("stderr_path"):
             stderr_text = Path(check_payload["stderr_path"]).read_text().strip()
 
-        findings: list[dict[str, Any]]
+        findings: list[dict[str, Any]] = []
         parse_error = False
-        if check_id == "podman-build":
+        status = "clean"
+        if check_state == "skipped":
+            findings = []
+            status = "skipped"
+            if stderr_text:
+                check_warnings.append(stderr_text)
+        elif check_id == "podman-build":
             findings = []
         elif not stdout_text:
             findings = []
@@ -323,13 +330,14 @@ def build_repo_result(payload: dict[str, Any]) -> dict[str, Any]:
                 parse_error = True
                 check_warnings.append("scanner output had unexpected JSON shape")
 
-        findings = apply_suppressions(findings, merged.get("suppressions", []), check_warnings)
+        findings = apply_suppressions(findings, merged.get("suppressions", []), repo_warnings)
         suppressed_count = sum(1 for item in findings if item.get("suppressed"))
         unsuppressed_count = sum(1 for item in findings if not item.get("suppressed"))
         exit_code = int(check_payload.get("exit_code", 0))
 
-        status = "clean"
-        if check_id == "podman-build" and exit_code != 0:
+        if check_state == "skipped":
+            status = "skipped"
+        elif check_id == "podman-build" and exit_code != 0:
             status = "error"
         elif parse_error or exit_code >= 2:
             status = "error"
@@ -364,8 +372,10 @@ def build_repo_result(payload: dict[str, Any]) -> dict[str, Any]:
             overall_status = "issues"
         elif missing_tools:
             overall_status = "error"
-        else:
+        elif any(check["status"] == "clean" for check in checks):
             overall_status = "clean"
+        elif all(check["status"] == "skipped" for check in checks):
+            overall_status = "skipped"
     elif missing_tools:
         overall_status = "error"
 
