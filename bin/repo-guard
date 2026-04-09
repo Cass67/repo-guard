@@ -81,6 +81,38 @@ contains_element() {
   return 1
 }
 
+python_manifest_kind() {
+  local target=$1
+
+  if [ -f "$target/requirements.txt" ]; then
+    printf '%s\n' "requirements"
+    return 0
+  fi
+
+  if [ -f "$target/pyproject.toml" ]; then
+    printf '%s\n' "pyproject"
+    return 0
+  fi
+
+  return 1
+}
+
+container_build_file_path() {
+  local target=$1
+
+  if [ -f "$target/Containerfile" ]; then
+    printf '%s\n' "$target/Containerfile"
+    return 0
+  fi
+
+  if [ -f "$target/Dockerfile" ]; then
+    printf '%s\n' "$target/Dockerfile"
+    return 0
+  fi
+
+  return 1
+}
+
 log_info() {
   printf '%s\n' "$1"
 }
@@ -1269,39 +1301,45 @@ run_python_checks() {
   local json_mode=${2:-0}
   local stdout_file=${3:-}
   local stderr_file=${4:-}
+  local manifest_kind=""
+
+  if ! manifest_kind=$(python_manifest_kind "$target"); then
+    if [ "$json_mode" -eq 1 ]; then
+      if [ -n "$stderr_file" ]; then
+        printf '%s\n' "no Python dependency manifest found, skipping pip-audit" >"$stderr_file"
+      else
+        printf '%s\n' "no Python dependency manifest found, skipping pip-audit" >&2
+      fi
+    else
+      log_info "no Python dependency manifest found, skipping pip-audit"
+    fi
+    return 0
+  fi
 
   if ! tool_exists pip-audit; then
     log_warn "pip-audit is not installed; skipping python dependency audit"
     return 0
   fi
 
-  if [ -f "$target/requirements.txt" ]; then
-    if [ "$json_mode" -eq 1 ]; then
-      (cd "$target" && capture_command_output "$stdout_file" "$stderr_file" pip-audit -f json -r requirements.txt)
-    else
-      (cd "$target" && pip-audit -r requirements.txt)
-    fi
-    return $?
-  fi
+  case "$manifest_kind" in
+    requirements)
+      if [ "$json_mode" -eq 1 ]; then
+        (cd "$target" && capture_command_output "$stdout_file" "$stderr_file" pip-audit -f json -r requirements.txt)
+      else
+        (cd "$target" && pip-audit -r requirements.txt)
+      fi
+      return $?
+      ;;
+    pyproject)
+      if [ "$json_mode" -eq 1 ]; then
+        (cd "$target" && capture_command_output "$stdout_file" "$stderr_file" pip-audit -f json)
+      else
+        (cd "$target" && pip-audit)
+      fi
+      return $?
+      ;;
+  esac
 
-  if [ -f "$target/pyproject.toml" ]; then
-    if [ "$json_mode" -eq 1 ]; then
-      (cd "$target" && capture_command_output "$stdout_file" "$stderr_file" pip-audit -f json)
-    else
-      (cd "$target" && pip-audit)
-    fi
-    return $?
-  fi
-
-  if [ "$json_mode" -eq 1 ]; then
-    if [ -n "$stderr_file" ]; then
-      printf '%s\n' "no Python dependency manifest found, skipping pip-audit" >"$stderr_file"
-    else
-      printf '%s\n' "no Python dependency manifest found, skipping pip-audit" >&2
-    fi
-  else
-    log_info "no Python dependency manifest found, skipping pip-audit"
-  fi
   return 0
 }
 
@@ -1350,8 +1388,19 @@ run_container_deep() {
   local image_stderr=${6:-}
   local build_stdout=${7:-}
   local build_stderr=${8:-}
+  local build_file=""
 
   container_build_exit=0
+  container_image_exit=0
+
+  if ! build_file=$(container_build_file_path "$target"); then
+    if [ "$json_mode" -eq 1 ]; then
+      printf '%s\n' "no container file found, skipping image build" >&2
+    else
+      log_info "no container file found, skipping image build"
+    fi
+    return 0
+  fi
 
   if ! tool_exists podman; then
     log_warn "podman is not installed; skipping container image build"
@@ -1363,35 +1412,15 @@ run_container_deep() {
     return 0
   fi
 
-  if [ -f "$target/Containerfile" ]; then
-    if [ "$json_mode" -eq 1 ]; then
-      if capture_command_output "$build_stdout" "$build_stderr" podman build -t "$image_name" -f "$target/Containerfile" "$target"; then
-        container_build_exit=0
-      else
-        container_build_exit=$?
-        return "$container_build_exit"
-      fi
+  if [ "$json_mode" -eq 1 ]; then
+    if capture_command_output "$build_stdout" "$build_stderr" podman build -t "$image_name" -f "$build_file" "$target"; then
+      container_build_exit=0
     else
-      podman build -t "$image_name" -f "$target/Containerfile" "$target"
-    fi
-  elif [ -f "$target/Dockerfile" ]; then
-    if [ "$json_mode" -eq 1 ]; then
-      if capture_command_output "$build_stdout" "$build_stderr" podman build -t "$image_name" -f "$target/Dockerfile" "$target"; then
-        container_build_exit=0
-      else
-        container_build_exit=$?
-        return "$container_build_exit"
-      fi
-    else
-      podman build -t "$image_name" -f "$target/Dockerfile" "$target"
+      container_build_exit=$?
+      return "$container_build_exit"
     fi
   else
-    if [ "$json_mode" -eq 1 ]; then
-      printf '%s\n' "no container file found, skipping image build" >&2
-    else
-      log_info "no container file found, skipping image build"
-    fi
-    return 0
+    podman build -t "$image_name" -f "$build_file" "$target"
   fi
 
   if [ "$json_mode" -eq 1 ]; then
@@ -1489,7 +1518,7 @@ run_command() {
     for lang in "${run_langs[@]:-}"; do
       case "$lang" in
         python)
-          if ! tool_exists pip-audit && ! contains_element "pip-audit" "${run_missing_tools[@]:-}"; then
+          if python_manifest_kind "$target" >/dev/null 2>&1 && ! tool_exists pip-audit && ! contains_element "pip-audit" "${run_missing_tools[@]:-}"; then
             run_missing_tools+=("pip-audit")
           fi
           pip_stdout="$tmp_dir/pip-audit.stdout"
@@ -1514,7 +1543,7 @@ run_command() {
           if ! tool_exists trivy && ! contains_element "trivy" "${run_missing_tools[@]:-}"; then
             run_missing_tools+=("trivy")
           fi
-          if [ "$run_deep" -eq 1 ] && ! tool_exists podman && ! contains_element "podman" "${run_missing_tools[@]:-}"; then
+          if [ "$run_deep" -eq 1 ] && container_build_file_path "$target" >/dev/null 2>&1 && ! tool_exists podman && ! contains_element "podman" "${run_missing_tools[@]:-}"; then
             run_missing_tools+=("podman")
           fi
           fs_stdout="$tmp_dir/trivy-fs.stdout"

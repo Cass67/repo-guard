@@ -9,6 +9,7 @@ stub_dir="$tmp_root/stubs"
 missing_tool_dir="$tmp_root/missing-tool-shim"
 missing_rg_dir="$tmp_root/missing-rg-shim"
 missing_python_dir="$tmp_root/missing-python-shim"
+missing_podman_dir="$tmp_root/missing-podman-shim"
 partial_scan_dir="$tmp_root/partial-scan-shim"
 run_log="$tmp_root/run.log"
 path_value="$stub_dir:$PATH"
@@ -22,9 +23,11 @@ mkdir -p "$stub_dir"
 mkdir -p "$missing_tool_dir"
 mkdir -p "$missing_rg_dir"
 mkdir -p "$missing_python_dir"
+mkdir -p "$missing_podman_dir"
 mkdir -p "$partial_scan_dir"
 ln -s "$(command -v python3)" "$missing_tool_dir/python3"
 ln -s "$(command -v python3)" "$missing_rg_dir/python3"
+ln -s "$(command -v python3)" "$missing_podman_dir/python3"
 ln -s "$(command -v python3)" "$partial_scan_dir/python3"
 cat >"$missing_python_dir/python3" <<'EOF'
 #!/usr/bin/env bash
@@ -33,11 +36,13 @@ EOF
 if command -v rg >/dev/null 2>&1; then
   ln -s "$(command -v rg)" "$missing_tool_dir/rg"
   ln -s "$(command -v rg)" "$missing_python_dir/rg"
+  ln -s "$(command -v rg)" "$missing_podman_dir/rg"
   ln -s "$(command -v rg)" "$partial_scan_dir/rg"
 fi
 missing_path_value="$missing_tool_dir:/usr/bin:/bin:/usr/sbin:/sbin"
 missing_rg_path_value="$missing_rg_dir:/usr/bin:/bin:/usr/sbin:/sbin"
 missing_python_path_value="$missing_python_dir:/usr/bin:/bin:/usr/sbin:/sbin"
+missing_podman_path_value="$missing_podman_dir:/usr/bin:/bin:/usr/sbin:/sbin"
 partial_scan_path_value="$partial_scan_dir:/usr/bin:/bin:/usr/sbin:/sbin"
 
 cat >"$stub_dir/trivy" <<'EOF'
@@ -45,11 +50,25 @@ cat >"$stub_dir/trivy" <<'EOF'
 set -euo pipefail
 if [ "${RUN_MODE:-text}" = "json" ]; then
   case "$1" in
-    fs) cat "$TRIVY_FS_JSON" ;;
-    config) cat "$TRIVY_CONFIG_JSON" ;;
-    image) cat "$TRIVY_IMAGE_JSON" ;;
+    fs)
+      if [ -n "${TRIVY_FS_JSON:-}" ]; then
+        cat "$TRIVY_FS_JSON"
+      fi
+      exit "${TRIVY_FS_EXIT_CODE:-${TRIVY_EXIT_CODE:-0}}"
+      ;;
+    config)
+      if [ -n "${TRIVY_CONFIG_JSON:-}" ]; then
+        cat "$TRIVY_CONFIG_JSON"
+      fi
+      exit "${TRIVY_CONFIG_EXIT_CODE:-${TRIVY_EXIT_CODE:-0}}"
+      ;;
+    image)
+      if [ -n "${TRIVY_IMAGE_JSON:-}" ]; then
+        cat "$TRIVY_IMAGE_JSON"
+      fi
+      exit "${TRIVY_IMAGE_EXIT_CODE:-${TRIVY_EXIT_CODE:-0}}"
+      ;;
   esac
-  exit "${TRIVY_EXIT_CODE:-0}"
 fi
 printf 'trivy %s\n' "$*" >>"$RUN_LOG"
 case "$1" in
@@ -82,6 +101,7 @@ chmod +x "$stub_dir/trivy" "$stub_dir/pip-audit" "$stub_dir/podman"
 chmod +x "$missing_python_dir/python3"
 ln -s "$stub_dir/pip-audit" "$missing_rg_dir/pip-audit"
 ln -s "$stub_dir/trivy" "$missing_python_dir/trivy"
+ln -s "$stub_dir/trivy" "$missing_podman_dir/trivy"
 ln -s "$stub_dir/podman" "$missing_python_dir/podman"
 ln -s "$stub_dir/trivy" "$partial_scan_dir/trivy"
 ln -s "$stub_dir/podman" "$partial_scan_dir/podman"
@@ -172,6 +192,25 @@ mkdir -p "$mixed_repo"
 mixed_repo="$(cd "$mixed_repo" && pwd)"
 printf 'flask==3.0.0\n' >"$mixed_repo/requirements.txt"
 printf 'FROM python:3.12-slim\n' >"$mixed_repo/Dockerfile"
+suppressed_container_repo="$tmp_root/suppressed-container-repo"
+mkdir -p "$suppressed_container_repo"
+suppressed_container_repo="$(cd "$suppressed_container_repo" && pwd)"
+printf 'FROM alpine:3.20\n' >"$suppressed_container_repo/Dockerfile"
+cat >"$suppressed_container_repo/.repo-guard.yaml" <<'EOF'
+version: 1
+suppressions:
+  - id: "AVD-DS-0001"
+    tools: ["trivy"]
+    reason: "accepted in test fixture"
+EOF
+compose_only_repo="$tmp_root/compose-only-repo"
+mkdir -p "$compose_only_repo"
+compose_only_repo="$(cd "$compose_only_repo" && pwd)"
+cat >"$compose_only_repo/compose.yaml" <<'EOF'
+services:
+  app:
+    image: alpine:3.20
+EOF
 configured_container_repo="$tmp_root/configured-container-repo"
 mkdir -p "$configured_container_repo"
 configured_container_repo="$(cd "$configured_container_repo" && pwd)"
@@ -187,6 +226,7 @@ cat >"$tmp_root/trivy-empty.json" <<'EOF'
   "Results": []
 }
 EOF
+: >"$tmp_root/trivy-silent.json"
 cat >"$tmp_root/trivy-issues.json" <<'EOF'
 {
   "Results": [
@@ -411,6 +451,66 @@ check = next(item for item in data["checks"] if item["id"] == "podman-build")
 assert check["status"] == "error"
 PY
 
+if env PATH="$path_value" RUN_MODE=json \
+  TRIVY_FS_EXIT_CODE=1 \
+  TRIVY_CONFIG_JSON="$tmp_root/trivy-empty.json" \
+  "$script" run --json "$container_repo" >"$tmp_root/run-trivy-silent-failed-check.json"; then
+  echo "run --json unexpectedly exited 0 when trivy fs failed silently" >&2
+  exit 1
+fi
+
+python3 - "$tmp_root/run-trivy-silent-failed-check.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+assert data["status"] == "error"
+check = next(item for item in data["checks"] if item["id"] == "trivy-fs")
+assert check["status"] == "error"
+assert check["finding_count"] == 0
+PY
+
+env PATH="$path_value" RUN_MODE=json \
+  TRIVY_FS_JSON="$tmp_root/trivy-empty.json" \
+  TRIVY_CONFIG_JSON="$tmp_root/trivy-issues.json" \
+  TRIVY_CONFIG_EXIT_CODE=1 \
+  "$script" run --json "$suppressed_container_repo" >"$tmp_root/run-suppressed-trivy-family.json"
+
+python3 - "$tmp_root/run-suppressed-trivy-family.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+assert data["status"] == "clean"
+check = next(item for item in data["checks"] if item["id"] == "trivy-config")
+assert check["status"] == "clean"
+assert check["suppressed_count"] == 1
+assert check["unsuppressed_count"] == 0
+assert check["findings"][0]["suppressed"] is True
+PY
+
+env PATH="$missing_podman_path_value" RUN_MODE=json \
+  TRIVY_FS_JSON="$tmp_root/trivy-empty.json" \
+  TRIVY_CONFIG_JSON="$tmp_root/trivy-empty.json" \
+  "$script" run --json --deep "$compose_only_repo" >"$tmp_root/run-compose-only-missing-podman.json"
+
+python3 - "$tmp_root/run-compose-only-missing-podman.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+assert data["status"] == "clean"
+assert data["missing_tools"] == []
+check_ids = {check["id"] for check in data["checks"]}
+assert "trivy-fs" in check_ids
+assert "trivy-config" in check_ids
+assert "podman-build" not in check_ids
+assert "trivy-image" not in check_ids
+PY
+
 env PATH="$path_value" RUN_MODE=json \
   PIP_AUDIT_JSON="$tmp_root/pip-audit.json" \
   TRIVY_FS_JSON="$tmp_root/trivy-empty.json" \
@@ -426,6 +526,23 @@ from pathlib import Path
 data = json.loads(Path(sys.argv[1]).read_text())
 assert data["repo"]["path"] == sys.argv[2]
 assert data["status"] == "skipped"
+check = data["checks"][0]
+assert check["id"] == "pip-audit"
+assert check["status"] == "skipped"
+PY
+
+env PATH="$missing_path_value" \
+  "$script" run --json "$no_manifest_repo" >"$tmp_root/no-manifest-missing-pip-audit.json"
+
+python3 - "$tmp_root/no-manifest-missing-pip-audit.json" "$no_manifest_repo" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+assert data["repo"]["path"] == sys.argv[2]
+assert data["status"] == "skipped"
+assert data["missing_tools"] == []
 check = data["checks"][0]
 assert check["id"] == "pip-audit"
 assert check["status"] == "skipped"
@@ -607,6 +724,65 @@ if python3 "$repo_root/bin/repo_guard_runtime.py" resolve-run-config \
   exit 1
 fi
 grep -Fq 'audit must be a mapping' "$tmp_root/runtime-invalid-shape.stderr"
+
+cat >"$tmp_root/runtime-invalid-severity-type.yaml" <<'EOF'
+version: 1
+scanning:
+  severity: ["CRITICAL"]
+EOF
+
+if python3 "$repo_root/bin/repo_guard_runtime.py" resolve-run-config \
+  "$tmp_root/runtime-invalid-severity-type.yaml" \
+  >"$tmp_root/runtime-invalid-severity-type.stdout" 2>"$tmp_root/runtime-invalid-severity-type.stderr"; then
+  echo "resolve-run-config unexpectedly accepted a list-valued severity" >&2
+  exit 1
+fi
+
+if grep -Fq 'Traceback (most recent call last):' "$tmp_root/runtime-invalid-severity-type.stderr"; then
+  echo "invalid severity type unexpectedly emitted a Python traceback" >&2
+  exit 1
+fi
+grep -Fq 'scanning.severity must be a string' "$tmp_root/runtime-invalid-severity-type.stderr"
+
+cat >"$tmp_root/runtime-invalid-suppression-tools.yaml" <<'EOF'
+version: 1
+suppressions:
+  - id: "AVD-DS-0001"
+    tools: 1
+    reason: "bad fixture"
+EOF
+
+cat >"$tmp_root/runtime-invalid-suppression-payload.json" <<EOF
+{
+  "repo_path": "$container_repo",
+  "relative_path": ".",
+  "detected": ["containers"],
+  "missing_tools": [],
+  "config_path": "$tmp_root/runtime-invalid-suppression-tools.yaml",
+  "checks": [
+    {
+      "id": "trivy-config",
+      "exit_code": 1,
+      "stdout_path": "$tmp_root/trivy-issues.json",
+      "stderr_path": "$tmp_root/trivy-silent.json",
+      "state": "observed"
+    }
+  ]
+}
+EOF
+
+if python3 "$repo_root/bin/repo_guard_runtime.py" build-repo-result \
+  "$tmp_root/runtime-invalid-suppression-payload.json" \
+  >"$tmp_root/runtime-invalid-suppression.stdout" 2>"$tmp_root/runtime-invalid-suppression.stderr"; then
+  echo "build-repo-result unexpectedly accepted numeric suppression tools" >&2
+  exit 1
+fi
+
+if grep -Fq 'Traceback (most recent call last):' "$tmp_root/runtime-invalid-suppression.stderr"; then
+  echo "invalid suppression tools unexpectedly emitted a Python traceback" >&2
+  exit 1
+fi
+grep -Fq 'suppression tools must be a string or list of strings' "$tmp_root/runtime-invalid-suppression.stderr"
 
 cat >"$tmp_root/runtime-nested-warning-config.yaml" <<'EOF'
 version: 1

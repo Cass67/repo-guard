@@ -183,7 +183,57 @@ def parse_config_file(path: Path) -> ParsedConfig:
     if data["version"] != 1:
         raise ValueError(f"{path}: unsupported config version: {data['version']}")
 
+    validate_config_types(path, data)
     return ParsedConfig(data, warnings)
+
+
+def validate_config_types(path: Path, data: dict[str, Any]) -> None:
+    audit = data.get("audit")
+    if audit is not None:
+        if not isinstance(audit, dict):
+            raise ValueError(f"{path}: audit must be a mapping")
+        if "exclude" in audit:
+            exclude = audit["exclude"]
+            if not isinstance(exclude, list) or any(not isinstance(item, str) for item in exclude):
+                raise ValueError(f"{path}: audit.exclude must be a list of strings")
+        if "output_dir" in audit and not isinstance(audit["output_dir"], str):
+            raise ValueError(f"{path}: audit.output_dir must be a string")
+        if "deep" in audit and not isinstance(audit["deep"], bool):
+            raise ValueError(f"{path}: audit.deep must be a boolean")
+        if "baseline_file" in audit and audit["baseline_file"] is not None and not isinstance(audit["baseline_file"], str):
+            raise ValueError(f"{path}: audit.baseline_file must be a string")
+
+    scanning = data.get("scanning")
+    if scanning is not None:
+        if not isinstance(scanning, dict):
+            raise ValueError(f"{path}: scanning must be a mapping")
+        if "severity" in scanning and not isinstance(scanning["severity"], str):
+            raise ValueError(f"{path}: scanning.severity must be a string")
+        if "image_name" in scanning and not isinstance(scanning["image_name"], str):
+            raise ValueError(f"{path}: scanning.image_name must be a string")
+
+    suppressions = data.get("suppressions")
+    if suppressions is not None:
+        if not isinstance(suppressions, list):
+            raise ValueError(f"{path}: suppressions must be a list")
+        for suppression in suppressions:
+            if not isinstance(suppression, dict):
+                raise ValueError(f"{path}: each suppression must be a mapping")
+            if "id" in suppression and not isinstance(suppression["id"], str):
+                raise ValueError(f"{path}: suppression id must be a string")
+            if "reason" in suppression and not isinstance(suppression["reason"], str):
+                raise ValueError(f"{path}: suppression reason must be a string")
+            if "package" in suppression and not isinstance(suppression["package"], str):
+                raise ValueError(f"{path}: suppression package must be a string")
+            if "expires" in suppression and not isinstance(suppression["expires"], str):
+                raise ValueError(f"{path}: suppression expires must be a string")
+            if "tools" in suppression:
+                tools = suppression["tools"]
+                if isinstance(tools, str):
+                    continue
+                if isinstance(tools, list) and all(isinstance(item, str) for item in tools):
+                    continue
+                raise ValueError(f"{path}: suppression tools must be a string or list of strings")
 
 
 def merge_configs(root_config: dict[str, Any], repo_config: dict[str, Any]) -> dict[str, Any]:
@@ -280,7 +330,7 @@ def apply_suppressions(
                 tools = suppression["tools"]
                 if isinstance(tools, str):
                     tools = [tools]
-                if tool_id not in tools:
+                if not any(tool_matches_suppression(tool_id, candidate) for candidate in tools):
                     continue
             if "package" in suppression and suppression["package"] != package_or_target:
                 continue
@@ -296,6 +346,14 @@ def apply_suppressions(
             finding["suppressed"] = True
             break
     return findings
+
+
+def tool_matches_suppression(tool_id: str, candidate: str) -> bool:
+    if candidate == tool_id:
+        return True
+    if candidate == "trivy" and tool_id.startswith("trivy-"):
+        return True
+    return False
 
 
 def build_repo_result(payload: dict[str, Any]) -> dict[str, Any]:
@@ -351,7 +409,7 @@ def build_repo_result(payload: dict[str, Any]) -> dict[str, Any]:
             status = "skipped"
         elif check_id == "podman-build" and exit_code != 0:
             status = "error"
-        elif parse_error or exit_code >= 2:
+        elif parse_error or exit_code >= 2 or (exit_code != 0 and not stdout_text):
             status = "error"
         elif unsuppressed_count > 0:
             status = "issues"
