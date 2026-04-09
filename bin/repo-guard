@@ -18,6 +18,11 @@ git_init=0
 upgrade_mode=0
 detect_mode=0
 run_deep=0
+run_json=0
+audit_output_dir=""
+container_fs_exit=0
+container_config_exit=0
+container_image_exit=0
 
 selected_langs=()
 required_tools=()
@@ -29,7 +34,7 @@ show_help() {
   cat <<'EOF'
 usage:
   repo-guard [--langs python,go,...] [--detect] [--yes|--prompt-install|--no-install] [--dry-run] [--check-tools] [--git-init] [--upgrade] [repo-path]
-  repo-guard run [--deep] [repo-path]
+  repo-guard run [--json] [--deep] [repo-path]
 
 bootstrap a repo with secret-safe defaults and local pre-commit hooks,
 or run local dependency/container scans against a target repo
@@ -52,6 +57,7 @@ bootstrap options:
   --help, -h         show this help
 
 run options:
+  --json             emit one normalized JSON result object to stdout
   --deep             include Podman image build + Trivy image scan
 
 automatic tool installation is supported on macOS and Linux
@@ -80,6 +86,17 @@ log_info() {
 
 log_warn() {
   printf '%s\n' "$1" >&2
+}
+
+capture_command_output() {
+  local stdout_file=$1
+  local stderr_file=$2
+  shift 2
+
+  if "$@" >"$stdout_file" 2>"$stderr_file"; then
+    return 0
+  fi
+  return $?
 }
 
 append_missing_lines() {
@@ -1245,6 +1262,9 @@ run_detected_langs_for_path() {
 
 run_python_checks() {
   local target=$1
+  local json_mode=${2:-0}
+  local stdout_file=${3:-}
+  local stderr_file=${4:-}
 
   if ! tool_exists pip-audit; then
     log_warn "pip-audit is not installed; skipping python dependency audit"
@@ -1252,12 +1272,20 @@ run_python_checks() {
   fi
 
   if [ -f "$target/requirements.txt" ]; then
-    (cd "$target" && pip-audit -r requirements.txt)
+    if [ "$json_mode" -eq 1 ]; then
+      (cd "$target" && capture_command_output "$stdout_file" "$stderr_file" pip-audit -f json -r requirements.txt)
+    else
+      (cd "$target" && pip-audit -r requirements.txt)
+    fi
     return $?
   fi
 
   if [ -f "$target/pyproject.toml" ]; then
-    (cd "$target" && pip-audit)
+    if [ "$json_mode" -eq 1 ]; then
+      (cd "$target" && capture_command_output "$stdout_file" "$stderr_file" pip-audit -f json)
+    else
+      (cd "$target" && pip-audit)
+    fi
     return $?
   fi
 
@@ -1267,19 +1295,48 @@ run_python_checks() {
 
 run_container_checks() {
   local target=$1
+  local severity=$2
+  local json_mode=${3:-0}
+  local fs_stdout=${4:-}
+  local fs_stderr=${5:-}
+  local config_stdout=${6:-}
+  local config_stderr=${7:-}
+  local status=0
 
   if ! tool_exists trivy; then
     log_warn "trivy is not installed; skipping container checks"
     return 0
   fi
 
-  trivy fs --severity HIGH,CRITICAL --exit-code 1 "$target"
-  trivy config --severity HIGH,CRITICAL --exit-code 1 "$target"
+  if [ "$json_mode" -eq 1 ]; then
+    if capture_command_output "$fs_stdout" "$fs_stderr" trivy fs --format json --severity "$severity" --exit-code 1 "$target"; then
+      container_fs_exit=0
+    else
+      container_fs_exit=$?
+      status=1
+    fi
+    if capture_command_output "$config_stdout" "$config_stderr" trivy config --format json --severity "$severity" --exit-code 1 "$target"; then
+      container_config_exit=0
+    else
+      container_config_exit=$?
+      status=1
+    fi
+    return "$status"
+  fi
+
+  trivy fs --severity "$severity" --exit-code 1 "$target"
+  trivy config --severity "$severity" --exit-code 1 "$target"
 }
 
 run_container_deep() {
   local target=$1
-  local image_name="local/repo-guard:dev"
+  local severity=$2
+  local image_name=$3
+  local json_mode=${4:-0}
+  local image_stdout=${5:-}
+  local image_stderr=${6:-}
+  local build_stdout=${7:-}
+  local build_stderr=${8:-}
 
   if ! tool_exists podman; then
     log_warn "podman is not installed; skipping container image build"
@@ -1292,21 +1349,46 @@ run_container_deep() {
   fi
 
   if [ -f "$target/Containerfile" ]; then
-    podman build -t "$image_name" -f "$target/Containerfile" "$target"
+    if [ "$json_mode" -eq 1 ]; then
+      if ! capture_command_output "$build_stdout" "$build_stderr" podman build -t "$image_name" -f "$target/Containerfile" "$target"; then
+        return 1
+      fi
+    else
+      podman build -t "$image_name" -f "$target/Containerfile" "$target"
+    fi
   elif [ -f "$target/Dockerfile" ]; then
-    podman build -t "$image_name" -f "$target/Dockerfile" "$target"
+    if [ "$json_mode" -eq 1 ]; then
+      if ! capture_command_output "$build_stdout" "$build_stderr" podman build -t "$image_name" -f "$target/Dockerfile" "$target"; then
+        return 1
+      fi
+    else
+      podman build -t "$image_name" -f "$target/Dockerfile" "$target"
+    fi
   else
     log_info "no container file found, skipping image build"
     return 0
   fi
 
-  trivy image --severity HIGH,CRITICAL --exit-code 1 "$image_name"
+  if [ "$json_mode" -eq 1 ]; then
+    if capture_command_output "$image_stdout" "$image_stderr" trivy image --format json --severity "$severity" --exit-code 1 "$image_name"; then
+      container_image_exit=0
+      return 0
+    fi
+    container_image_exit=$?
+    return "$container_image_exit"
+  fi
+
+  trivy image --severity "$severity" --exit-code 1 "$image_name"
 }
 
 run_command() {
   local target=$repo_root
   local lang
   local status=0
+  local config_path
+  local settings_json
+  local severity="HIGH,CRITICAL"
+  local image_name="local/repo-guard:dev"
   local -a run_langs=()
 
   if [ -e "$target" ] && [ ! -d "$target" ]; then
@@ -1328,6 +1410,14 @@ run_command() {
   fi
 
   target="$(cd "$target" && pwd)"
+  config_path="$target/.repo-guard.yaml"
+
+  if ! settings_json=$(python3 "$script_dir/repo_guard_runtime.py" resolve-run-config "$config_path"); then
+    log_warn "failed to load run config from $config_path"
+    return 1
+  fi
+  severity=$(printf '%s' "$settings_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["severity"])')
+  image_name=$(printf '%s' "$settings_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["image_name"])')
 
   while IFS= read -r lang; do
     if [ -n "$lang" ]; then
@@ -1335,18 +1425,148 @@ run_command() {
     fi
   done < <(run_detected_langs_for_path "$target")
 
+  if [ "$run_json" -eq 1 ]; then
+    local tmp_dir
+    local checks_file
+    local payload_file
+    local run_json_file
+    local pip_stdout
+    local pip_stderr
+    local fs_stdout
+    local fs_stderr
+    local config_stdout
+    local config_stderr
+    local image_stdout
+    local image_stderr
+    local build_stdout
+    local build_stderr
+    local exit_code
+    local detected_serialized
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/repo-guard-run-json.XXXXXX")
+    checks_file="$tmp_dir/checks.txt"
+    payload_file="$tmp_dir/payload.json"
+    run_json_file="$tmp_dir/run.json"
+    : >"$checks_file"
+
+    for lang in "${run_langs[@]:-}"; do
+      case "$lang" in
+        python)
+          pip_stdout="$tmp_dir/pip-audit.stdout"
+          pip_stderr="$tmp_dir/pip-audit.stderr"
+          : >"$pip_stdout"
+          : >"$pip_stderr"
+          if run_python_checks "$target" 1 "$pip_stdout" "$pip_stderr"; then
+            exit_code=0
+          else
+            exit_code=$?
+            status=1
+          fi
+          if [ -s "$pip_stdout" ] || [ -s "$pip_stderr" ]; then
+            printf '%s|%s|%s|%s\n' "pip-audit" "$exit_code" "$pip_stdout" "$pip_stderr" >>"$checks_file"
+          fi
+          ;;
+        containers)
+          fs_stdout="$tmp_dir/trivy-fs.stdout"
+          fs_stderr="$tmp_dir/trivy-fs.stderr"
+          config_stdout="$tmp_dir/trivy-config.stdout"
+          config_stderr="$tmp_dir/trivy-config.stderr"
+          : >"$fs_stdout"
+          : >"$fs_stderr"
+          : >"$config_stdout"
+          : >"$config_stderr"
+          if run_container_checks "$target" "$severity" 1 "$fs_stdout" "$fs_stderr" "$config_stdout" "$config_stderr"; then
+            status=$status
+          else
+            status=1
+          fi
+          if [ -s "$fs_stdout" ] || [ -s "$fs_stderr" ]; then
+            printf '%s|%s|%s|%s\n' "trivy-fs" "$container_fs_exit" "$fs_stdout" "$fs_stderr" >>"$checks_file"
+          fi
+          if [ -s "$config_stdout" ] || [ -s "$config_stderr" ]; then
+            printf '%s|%s|%s|%s\n' "trivy-config" "$container_config_exit" "$config_stdout" "$config_stderr" >>"$checks_file"
+          fi
+          if [ "$run_deep" -eq 1 ]; then
+            image_stdout="$tmp_dir/trivy-image.stdout"
+            image_stderr="$tmp_dir/trivy-image.stderr"
+            build_stdout="$tmp_dir/podman-build.stdout"
+            build_stderr="$tmp_dir/podman-build.stderr"
+            : >"$image_stdout"
+            : >"$image_stderr"
+            : >"$build_stdout"
+            : >"$build_stderr"
+            if run_container_deep "$target" "$severity" "$image_name" 1 "$image_stdout" "$image_stderr" "$build_stdout" "$build_stderr"; then
+              status=$status
+            else
+              status=1
+            fi
+            if [ -s "$image_stdout" ] || [ -s "$image_stderr" ]; then
+              printf '%s|%s|%s|%s\n' "trivy-image" "$container_image_exit" "$image_stdout" "$image_stderr" >>"$checks_file"
+            fi
+          fi
+          ;;
+      esac
+    done
+
+    detected_serialized=""
+    if [ "${#run_langs[@]}" -gt 0 ]; then
+      detected_serialized="${run_langs[*]}"
+    fi
+
+    python3 - "$payload_file" "$target" "$config_path" "$checks_file" "$detected_serialized" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload_path = Path(sys.argv[1])
+repo_path = sys.argv[2]
+config_path = sys.argv[3]
+checks_file = Path(sys.argv[4])
+detected = sys.argv[5].split() if len(sys.argv) > 5 and sys.argv[5] else []
+checks = []
+for line in checks_file.read_text().splitlines():
+    if not line.strip():
+        continue
+    check_id, exit_code, stdout_path, stderr_path = line.split("|", 3)
+    checks.append(
+        {
+            "id": check_id,
+            "exit_code": int(exit_code),
+            "stdout_path": stdout_path,
+            "stderr_path": stderr_path,
+        }
+    )
+payload = {
+    "repo_path": repo_path,
+    "relative_path": ".",
+    "detected": detected,
+    "missing_tools": [],
+    "config_path": config_path,
+    "checks": checks,
+}
+payload_path.write_text(json.dumps(payload))
+PY
+
+    if ! python3 "$script_dir/repo_guard_runtime.py" build-repo-result "$payload_file" >"$run_json_file"; then
+      rm -rf "$tmp_dir"
+      return 1
+    fi
+    cat "$run_json_file"
+    rm -rf "$tmp_dir"
+    return "$status"
+  fi
+
   for lang in "${run_langs[@]:-}"; do
     case "$lang" in
       python)
-        if ! run_python_checks "$target"; then
+        if ! run_python_checks "$target" 0; then
           status=1
         fi
         ;;
       containers)
-        if ! run_container_checks "$target"; then
+        if ! run_container_checks "$target" "$severity" 0; then
           status=1
         fi
-        if [ "$run_deep" -eq 1 ] && ! run_container_deep "$target"; then
+        if [ "$run_deep" -eq 1 ] && ! run_container_deep "$target" "$severity" "$image_name" 0; then
           status=1
         fi
         ;;
@@ -1422,6 +1642,14 @@ while [ $# -gt 0 ]; do
         exit 1
       fi
       run_deep=1
+      shift
+      ;;
+    --json)
+      if [ "$command_name" != "run" ]; then
+        log_warn "unknown option: $1"
+        exit 1
+      fi
+      run_json=1
       shift
       ;;
     -*)
