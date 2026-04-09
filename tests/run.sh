@@ -6,6 +6,7 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 script="$repo_root/bin/repo-guard"
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/repo-guard-run.XXXXXX")"
 stub_dir="$tmp_root/stubs"
+missing_tool_dir="$tmp_root/missing-tool-shim"
 run_log="$tmp_root/run.log"
 path_value="$stub_dir:$PATH"
 
@@ -15,6 +16,12 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$stub_dir"
+mkdir -p "$missing_tool_dir"
+ln -s "$(command -v python3)" "$missing_tool_dir/python3"
+if command -v rg >/dev/null 2>&1; then
+  ln -s "$(command -v rg)" "$missing_tool_dir/rg"
+fi
+missing_path_value="$missing_tool_dir:/usr/bin:/bin:/usr/sbin:/sbin"
 
 cat >"$stub_dir/trivy" <<'EOF'
 #!/usr/bin/env bash
@@ -43,6 +50,9 @@ EOF
 cat >"$stub_dir/podman" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [ "${RUN_MODE:-text}" = "json" ] && [ "${PODMAN_FAIL_SILENTLY:-0}" = "1" ]; then
+  exit "${PODMAN_EXIT_CODE:-1}"
+fi
 printf 'podman %s\n' "$*" >>"$RUN_LOG"
 EOF
 
@@ -141,6 +151,16 @@ no_manifest_repo="$tmp_root/no-manifest-repo"
 mkdir -p "$no_manifest_repo"
 no_manifest_repo="$(cd "$no_manifest_repo" && pwd)"
 printf 'print("hello")\n' >"$no_manifest_repo/app.py"
+malformed_config_repo="$tmp_root/malformed-config-repo"
+mkdir -p "$malformed_config_repo"
+malformed_config_repo="$(cd "$malformed_config_repo" && pwd)"
+printf 'flask==3.0.0\n' >"$malformed_config_repo/requirements.txt"
+cat >"$malformed_config_repo/.repo-guard.yaml" <<'EOF'
+version: 1
+audit:
+  exclude:
+      - "archive/**"
+EOF
 
 : >"$run_log"
 env PATH="$path_value" RUN_LOG="$run_log" \
@@ -291,6 +311,29 @@ assert check["status"] == "error"
 assert check["finding_count"] == 0
 PY
 
+if env PATH="$path_value" RUN_MODE=json \
+  PODMAN_FAIL_SILENTLY=1 \
+  PODMAN_EXIT_CODE=1 \
+  PIP_AUDIT_JSON="$tmp_root/pip-audit.json" \
+  TRIVY_FS_JSON="$tmp_root/trivy-empty.json" \
+  TRIVY_CONFIG_JSON="$tmp_root/trivy-empty.json" \
+  TRIVY_IMAGE_JSON="$tmp_root/trivy-empty.json" \
+  "$script" run --json --deep "$container_repo" >"$tmp_root/run-build-failed.json"; then
+  echo "run --json --deep unexpectedly exited 0 when podman build failed" >&2
+  exit 1
+fi
+
+python3 - "$tmp_root/run-build-failed.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+assert data["status"] == "error"
+check = next(item for item in data["checks"] if item["id"] == "podman-build")
+assert check["status"] == "error"
+PY
+
 env PATH="$path_value" RUN_MODE=json \
   PIP_AUDIT_JSON="$tmp_root/pip-audit.json" \
   TRIVY_FS_JSON="$tmp_root/trivy-empty.json" \
@@ -307,6 +350,32 @@ data = json.loads(Path(sys.argv[1]).read_text())
 assert data["repo"]["path"] == sys.argv[2]
 assert data["status"] in ("clean", "skipped")
 PY
+
+env PATH="$missing_path_value" \
+  "$script" run --json "$python_repo" >"$tmp_root/run-missing-tools.json"
+
+python3 - "$tmp_root/run-missing-tools.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+assert data["status"] == "skipped"
+assert "pip-audit" in data["missing_tools"]
+PY
+
+if env PATH="$path_value" \
+  "$script" run --json "$malformed_config_repo" \
+  >"$tmp_root/malformed-config.stdout" 2>"$tmp_root/malformed-config.stderr"; then
+  echo "run --json unexpectedly exited 0 for malformed config" >&2
+  exit 1
+fi
+
+if grep -Fq 'Traceback (most recent call last):' "$tmp_root/malformed-config.stderr"; then
+  echo "malformed config unexpectedly emitted a Python traceback" >&2
+  exit 1
+fi
+grep -Fq 'unsupported indentation' "$tmp_root/malformed-config.stderr"
 
 cat >"$tmp_root/runtime-supported-config.yaml" <<'EOF'
 version: 1

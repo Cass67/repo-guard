@@ -22,6 +22,7 @@ run_json=0
 audit_output_dir=""
 container_fs_exit=0
 container_config_exit=0
+container_build_exit=0
 container_image_exit=0
 
 selected_langs=()
@@ -1345,6 +1346,8 @@ run_container_deep() {
   local build_stdout=${7:-}
   local build_stderr=${8:-}
 
+  container_build_exit=0
+
   if ! tool_exists podman; then
     log_warn "podman is not installed; skipping container image build"
     return 0
@@ -1357,16 +1360,22 @@ run_container_deep() {
 
   if [ -f "$target/Containerfile" ]; then
     if [ "$json_mode" -eq 1 ]; then
-      if ! capture_command_output "$build_stdout" "$build_stderr" podman build -t "$image_name" -f "$target/Containerfile" "$target"; then
-        return 1
+      if capture_command_output "$build_stdout" "$build_stderr" podman build -t "$image_name" -f "$target/Containerfile" "$target"; then
+        container_build_exit=0
+      else
+        container_build_exit=$?
+        return "$container_build_exit"
       fi
     else
       podman build -t "$image_name" -f "$target/Containerfile" "$target"
     fi
   elif [ -f "$target/Dockerfile" ]; then
     if [ "$json_mode" -eq 1 ]; then
-      if ! capture_command_output "$build_stdout" "$build_stderr" podman build -t "$image_name" -f "$target/Dockerfile" "$target"; then
-        return 1
+      if capture_command_output "$build_stdout" "$build_stderr" podman build -t "$image_name" -f "$target/Dockerfile" "$target"; then
+        container_build_exit=0
+      else
+        container_build_exit=$?
+        return "$container_build_exit"
       fi
     else
       podman build -t "$image_name" -f "$target/Dockerfile" "$target"
@@ -1401,6 +1410,7 @@ run_command() {
   local severity="HIGH,CRITICAL"
   local image_name="local/repo-guard:dev"
   local -a run_langs=()
+  local -a run_missing_tools=()
 
   if [ -e "$target" ] && [ ! -d "$target" ]; then
     log_warn "repo path exists but is not a directory: $target"
@@ -1424,7 +1434,6 @@ run_command() {
   config_path="$target/.repo-guard.yaml"
 
   if ! settings_json=$(python3 "$script_dir/repo_guard_runtime.py" resolve-run-config "$config_path"); then
-    log_warn "failed to load run config from $config_path"
     return 1
   fi
   severity=$(printf '%s' "$settings_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["severity"])')
@@ -1453,6 +1462,7 @@ run_command() {
     local build_stderr
     local exit_code
     local detected_serialized
+    local missing_serialized
     tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/repo-guard-run-json.XXXXXX")
     checks_file="$tmp_dir/checks.txt"
     payload_file="$tmp_dir/payload.json"
@@ -1462,6 +1472,9 @@ run_command() {
     for lang in "${run_langs[@]:-}"; do
       case "$lang" in
         python)
+          if ! tool_exists pip-audit && ! contains_element "pip-audit" "${run_missing_tools[@]:-}"; then
+            run_missing_tools+=("pip-audit")
+          fi
           pip_stdout="$tmp_dir/pip-audit.stdout"
           pip_stderr="$tmp_dir/pip-audit.stderr"
           : >"$pip_stdout"
@@ -1477,6 +1490,12 @@ run_command() {
           fi
           ;;
         containers)
+          if ! tool_exists trivy && ! contains_element "trivy" "${run_missing_tools[@]:-}"; then
+            run_missing_tools+=("trivy")
+          fi
+          if [ "$run_deep" -eq 1 ] && ! tool_exists podman && ! contains_element "podman" "${run_missing_tools[@]:-}"; then
+            run_missing_tools+=("podman")
+          fi
           fs_stdout="$tmp_dir/trivy-fs.stdout"
           fs_stderr="$tmp_dir/trivy-fs.stderr"
           config_stdout="$tmp_dir/trivy-config.stdout"
@@ -1510,6 +1529,9 @@ run_command() {
             else
               status=1
             fi
+            if [ "$container_build_exit" -ne 0 ]; then
+              printf '%s|%s|%s|%s\n' "podman-build" "$container_build_exit" "$build_stdout" "$build_stderr" >>"$checks_file"
+            fi
             if [ "$container_image_exit" -ne 0 ] || [ -s "$image_stdout" ] || [ -s "$image_stderr" ]; then
               printf '%s|%s|%s|%s\n' "trivy-image" "$container_image_exit" "$image_stdout" "$image_stderr" >>"$checks_file"
             fi
@@ -1522,8 +1544,12 @@ run_command() {
     if [ "${#run_langs[@]}" -gt 0 ]; then
       detected_serialized="${run_langs[*]}"
     fi
+    missing_serialized=""
+    if [ "${#run_missing_tools[@]}" -gt 0 ]; then
+      missing_serialized="${run_missing_tools[*]}"
+    fi
 
-    python3 - "$payload_file" "$target" "$config_path" "$checks_file" "$detected_serialized" <<'PY'
+    python3 - "$payload_file" "$target" "$config_path" "$checks_file" "$detected_serialized" "$missing_serialized" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -1533,6 +1559,7 @@ repo_path = sys.argv[2]
 config_path = sys.argv[3]
 checks_file = Path(sys.argv[4])
 detected = sys.argv[5].split() if len(sys.argv) > 5 and sys.argv[5] else []
+missing_tools = sys.argv[6].split() if len(sys.argv) > 6 and sys.argv[6] else []
 checks = []
 for line in checks_file.read_text().splitlines():
     if not line.strip():
@@ -1550,7 +1577,7 @@ payload = {
     "repo_path": repo_path,
     "relative_path": ".",
     "detected": detected,
-    "missing_tools": [],
+    "missing_tools": missing_tools,
     "config_path": config_path,
     "checks": checks,
 }

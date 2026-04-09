@@ -267,6 +267,7 @@ def build_repo_result(payload: dict[str, Any]) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     for check_payload in payload.get("checks", []):
         check_warnings: list[str] = []
+        check_id = check_payload["id"]
         stdout_text = ""
         stderr_text = ""
         if check_payload.get("stdout_path"):
@@ -276,15 +277,17 @@ def build_repo_result(payload: dict[str, Any]) -> dict[str, Any]:
 
         findings: list[dict[str, Any]]
         parse_error = False
-        if not stdout_text:
+        if check_id == "podman-build":
+            findings = []
+        elif not stdout_text:
             findings = []
         else:
             try:
                 document = json.loads(stdout_text)
-                if check_payload["id"] == "pip-audit":
+                if check_id == "pip-audit":
                     findings = normalize_pip_audit(document)
                 else:
-                    findings = normalize_trivy(document, check_payload["id"])
+                    findings = normalize_trivy(document, check_id)
             except json.JSONDecodeError:
                 findings = []
                 parse_error = True
@@ -296,17 +299,22 @@ def build_repo_result(payload: dict[str, Any]) -> dict[str, Any]:
         exit_code = int(check_payload.get("exit_code", 0))
 
         status = "clean"
-        if parse_error or exit_code >= 2:
+        if check_id == "podman-build" and exit_code != 0:
+            status = "error"
+        elif parse_error or exit_code >= 2:
             status = "error"
         elif unsuppressed_count > 0:
             status = "issues"
 
-        if status == "error" and stderr_text:
-            check_warnings.append(stderr_text)
+        if status == "error":
+            if stderr_text:
+                check_warnings.append(stderr_text)
+            elif stdout_text:
+                check_warnings.append(stdout_text)
 
         checks.append(
             {
-                "id": check_payload["id"],
+                "id": check_id,
                 "status": status,
                 "finding_count": len(findings),
                 "unsuppressed_count": unsuppressed_count,
@@ -341,38 +349,42 @@ def build_repo_result(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) < 2:
-        print("usage: repo_guard_runtime.py <resolve-run-config|build-repo-result> ...", file=sys.stderr)
-        return 2
-
-    command = argv[1]
-    if command == "resolve-run-config":
-        if len(argv) != 3:
-            print("usage: repo_guard_runtime.py resolve-run-config <repo-config-path>", file=sys.stderr)
+    try:
+        if len(argv) < 2:
+            print("usage: repo_guard_runtime.py <resolve-run-config|build-repo-result> ...", file=sys.stderr)
             return 2
-        parsed = parse_config_file(Path(argv[2]))
-        merged = merge_configs({}, parsed.data)
-        print(
-            json.dumps(
-                {
-                    "severity": merged["scanning"]["severity"],
-                    "image_name": merged["scanning"]["image_name"],
-                    "warnings": parsed.warnings,
-                }
+
+        command = argv[1]
+        if command == "resolve-run-config":
+            if len(argv) != 3:
+                print("usage: repo_guard_runtime.py resolve-run-config <repo-config-path>", file=sys.stderr)
+                return 2
+            parsed = parse_config_file(Path(argv[2]))
+            merged = merge_configs({}, parsed.data)
+            print(
+                json.dumps(
+                    {
+                        "severity": merged["scanning"]["severity"],
+                        "image_name": merged["scanning"]["image_name"],
+                        "warnings": parsed.warnings,
+                    }
+                )
             )
-        )
-        return 0
+            return 0
 
-    if command == "build-repo-result":
-        if len(argv) != 3:
-            print("usage: repo_guard_runtime.py build-repo-result <payload-json-path>", file=sys.stderr)
-            return 2
-        payload = json.loads(Path(argv[2]).read_text())
-        print(json.dumps(build_repo_result(payload)))
-        return 0
+        if command == "build-repo-result":
+            if len(argv) != 3:
+                print("usage: repo_guard_runtime.py build-repo-result <payload-json-path>", file=sys.stderr)
+                return 2
+            payload = json.loads(Path(argv[2]).read_text())
+            print(json.dumps(build_repo_result(payload)))
+            return 0
 
-    print(f"unknown command: {command}", file=sys.stderr)
-    return 2
+        print(f"unknown command: {command}", file=sys.stderr)
+        return 2
+    except (ValueError, OSError, json.JSONDecodeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
