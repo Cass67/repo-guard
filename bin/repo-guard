@@ -41,7 +41,7 @@ bootstrap a repo with secret-safe defaults and local pre-commit hooks,
 or run local dependency/container scans against a target repo
 
 supported languages:
-  python, go, bash, rust, c, javascript, typescript, ansible, containers
+  python, go, bash, rust, c, swift, javascript, typescript, ansible, containers
 
 aliases:
   py, js, ts, sh, shell, cpp, cxx
@@ -407,9 +407,9 @@ cleanup_legacy_precommit_blocks() {
       common_hook_count = 0
       signature_count = 0
       block_is_managed = 0
-      unique_hook = "^(      - id: )(risky-filenames|merge-conflict|trailing-whitespace|detect-private-key|ruff-check|ruff-format|radon-cc|vulture|go-vet|golangci-lint|govulncheck|bash-syntax|cargo-fmt|cargo-clippy|cargo-audit|tsc-noemit|ansible-lint|djlint)$"
+      unique_hook = "^(      - id: )(risky-filenames|merge-conflict|trailing-whitespace|detect-private-key|ruff-check|ruff-format|radon-cc|vulture|go-vet|golangci-lint|govulncheck|bash-syntax|cargo-fmt|cargo-clippy|cargo-audit|swiftformat|swiftlint|tsc-noemit|ansible-lint|djlint)$"
       common_hook = "^(      - id: )(gitleaks|bandit|gofmt|goimports|shfmt|shellcheck|clang-format|clang-tidy|cppcheck|eslint|prettier|yamllint)$"
-      repo_guard_signature = "(gitleaks git --pre-commit --staged --redact|\\$VIRTUAL_ENV/bin/ruff|\\./\\.venv/bin/ruff|\\./node_modules/\\.bin/(eslint|prettier|tsc)|golangci-lint run|govulncheck \\./\\.\\.\\.|cargo fmt --all -- --check|cargo clippy --all-targets --all-features -- -D warnings|ansible-lint \\.|djlint --check)"
+      repo_guard_signature = "(gitleaks git --pre-commit --staged --redact|\\$VIRTUAL_ENV/bin/ruff|\\./\\.venv/bin/ruff|\\./node_modules/\\.bin/(eslint|prettier|tsc)|golangci-lint run|govulncheck \\./\\.\\.\\.|cargo fmt --all -- --check|cargo clippy --all-targets --all-features -- -D warnings|swiftformat --lint|swiftlint lint|ansible-lint \\.|djlint --check)"
     }
 
     /^# repo-guard:[^:]+:start$/ {
@@ -478,7 +478,7 @@ add_selected_lang() {
   local lang=$1
 
   case "$lang" in
-    python|go|bash|rust|c|javascript|typescript|ansible|containers)
+    python|go|bash|rust|c|swift|javascript|typescript|ansible|containers)
       if ! contains_element "$lang" "${selected_langs[@]:-}"; then
         selected_langs+=("$lang")
       fi
@@ -543,6 +543,10 @@ detect_repo_langs() {
     add_detected_lang rust
   fi
 
+  if repo_has_globs "*.swift" "Package.swift" "*.xcodeproj/project.pbxproj" "*.xcworkspace/contents.xcworkspacedata"; then
+    add_detected_lang swift
+  fi
+
   if repo_has_globs "*.c" "*.cc" "*.cpp" "*.cxx" "*.h" "*.hh" "*.hpp" "CMakeLists.txt" "meson.build" "compile_commands.json"; then
     add_detected_lang c
   fi
@@ -580,7 +584,7 @@ detect_existing_precommit_langs() {
     return
   fi
 
-  for lang in python go bash rust c javascript typescript ansible containers; do
+  for lang in python go bash rust c swift javascript typescript ansible containers; do
     if grep -Fqx -- "# repo-guard:$lang:start" "$precommit_file"; then
       add_selected_lang "$lang"
     fi
@@ -660,6 +664,10 @@ collect_required_tools() {
         add_required_tool cargo
         add_required_tool cargo-audit
         ;;
+      swift)
+        add_required_tool swiftformat
+        add_required_tool swiftlint
+        ;;
       c)
         add_required_tool cppcheck
         ;;
@@ -729,6 +737,8 @@ minimum_version_for_tool() {
     shellcheck) printf '0.9.0\n' ;;
     cargo) printf '1.75.0\n' ;;
     cargo-audit) printf '0.18.0\n' ;;
+    swiftformat) printf '0.54.0\n' ;;
+    swiftlint) printf '0.55.0\n' ;;
     cppcheck) printf '2.13.0\n' ;;
     eslint) printf '9.0.0\n' ;;
     prettier) printf '3.0.0\n' ;;
@@ -750,7 +760,7 @@ installed_version_for_tool() {
   local raw=""
 
   case "$tool" in
-    pre-commit|rg|gitleaks|ruff|go|golangci-lint|shfmt|cppcheck|eslint|prettier|tsc|yamllint|ansible-lint|djlint|pip-audit|trivy)
+    pre-commit|rg|gitleaks|ruff|go|golangci-lint|shfmt|cppcheck|swiftformat|swiftlint|eslint|prettier|tsc|yamllint|ansible-lint|djlint|pip-audit|trivy)
       raw=$("$tool" --version 2>&1 | head -n 1 || true)
       ;;
     bandit|radon|vulture|cargo|cargo-audit)
@@ -880,7 +890,7 @@ install_node_cli() {
 install_with_brew() {
   local tool=$1
   case "$tool" in
-    pre-commit|rg|gitleaks|ruff|golangci-lint|shfmt|shellcheck|cppcheck|yamllint|trivy)
+    pre-commit|rg|gitleaks|ruff|golangci-lint|shfmt|shellcheck|cppcheck|swiftformat|swiftlint|yamllint|trivy)
       brew install "$tool"
       ;;
     bandit|radon|vulture|ansible-lint|djlint|pip-audit)
@@ -971,6 +981,10 @@ install_with_apt() {
       sudo apt-get update
       sudo apt-get install -y "$tool"
       ;;
+    swiftformat|swiftlint)
+      log_warn "install $tool manually, then rerun this script."
+      return 1
+      ;;
     eslint|prettier)
       install_node_cli "$tool"
       ;;
@@ -1029,6 +1043,10 @@ install_with_dnf() {
     clang-format|clang-tidy)
       sudo dnf install -y "$tool"
       ;;
+    swiftformat|swiftlint)
+      log_warn "install $tool manually, then rerun this script."
+      return 1
+      ;;
     eslint|prettier)
       install_node_cli "$tool"
       ;;
@@ -1085,6 +1103,10 @@ install_with_pacman() {
       ;;
     clang-format|clang-tidy)
       sudo pacman -S --noconfirm clang
+      ;;
+    swiftformat|swiftlint)
+      log_warn "install $tool manually, then rerun this script."
+      return 1
       ;;
     eslint|prettier)
       install_node_cli "$tool"

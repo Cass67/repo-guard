@@ -33,6 +33,10 @@ Install only the tools relevant to the languages enabled for this repo.
 - `cargo`
 - `cargo-audit`
 
+## Swift
+- `swiftformat`
+- `swiftlint`
+
 ## C/C++
 - `cppcheck`
 - optional: `clang-format`
@@ -58,6 +62,7 @@ Install only the tools relevant to the languages enabled for this repo.
 - Go: `go >= 1.22.0`, `golangci-lint >= 1.59.0`
 - Bash: `shfmt >= 3.8.0`, `shellcheck >= 0.9.0`
 - Rust: `cargo >= 1.75.0`, `cargo-audit >= 0.18.0`
+- Swift: `swiftformat >= 0.54.0`, `swiftlint >= 0.55.0`
 - C/C++: `cppcheck >= 2.13.0`
 - Ansible: `yamllint >= 1.35.0`, `ansible-lint >= 24.2.0`, `djlint >= 1.34.0`
 - JavaScript / TypeScript: `eslint >= 9.0.0`, `prettier >= 3.0.0`, `tsc >= 5.4.0`

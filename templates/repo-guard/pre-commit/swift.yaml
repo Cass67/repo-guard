@@ -1,0 +1,16 @@
+# repo-guard:swift:start
+- repo: local
+  hooks:
+    - id: swiftformat
+      name: swiftformat lint
+      entry: swiftformat --lint .
+      language: system
+      files: \.swift$
+      pass_filenames: false
+    - id: swiftlint
+      name: swiftlint
+      entry: swiftlint lint --quiet
+      language: system
+      files: \.swift$
+      pass_filenames: false
+# repo-guard:swift:end

@@ -307,6 +307,7 @@ Current heuristics:
 - Go: `*.go`, `go.mod`, `go.sum`
 - Bash: `*.sh`, `.shellcheckrc`, `.bashrc`, `.bash_profile`, `.bash_aliases`
 - Rust: `*.rs`, `Cargo.toml`, `Cargo.lock`
+- Swift: `*.swift`, `Package.swift`, `*.xcodeproj/project.pbxproj`, `*.xcworkspace/contents.xcworkspacedata`
 - C/C++: `*.c`, `*.cc`, `*.cpp`, `*.cxx`, `*.h`, `*.hh`, `*.hpp`, `CMakeLists.txt`, `meson.build`, `compile_commands.json`
 - JavaScript: `*.js`, `*.jsx`, `package.json`
 - TypeScript: `*.ts`, `*.tsx`, `*.mts`, `*.cts`, `tsconfig.json`
