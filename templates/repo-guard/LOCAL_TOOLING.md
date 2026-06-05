@@ -37,6 +37,10 @@ Install only the tools relevant to the languages enabled for this repo.
 - `swiftformat`
 - `swiftlint`
 
+Note: Homebrew's `swiftlint` formula may require a full Xcode install,
+not only Command Line Tools. Install full Xcode first or use SwiftLint's
+upstream release package.
+
 ## C/C++
 - `cppcheck`
 - optional: `clang-format`

@@ -890,8 +890,12 @@ install_node_cli() {
 install_with_brew() {
   local tool=$1
   case "$tool" in
-    pre-commit|rg|gitleaks|ruff|golangci-lint|shfmt|shellcheck|cppcheck|swiftformat|swiftlint|yamllint|trivy)
+    pre-commit|rg|gitleaks|ruff|golangci-lint|shfmt|shellcheck|cppcheck|swiftformat|yamllint|trivy)
       brew install "$tool"
+      ;;
+    swiftlint)
+      log_warn "install swiftlint manually. Homebrew may require full Xcode, not just CLT."
+      return 1
       ;;
     bandit|radon|vulture|ansible-lint|djlint|pip-audit)
       install_python_cli "$tool"
