@@ -887,6 +887,33 @@ install_node_cli() {
   npm install -g "$package"
 }
 
+install_swiftlint_pkg() {
+  local tmp_dir
+  local pkg_file
+
+  if ! command -v curl >/dev/null 2>&1; then
+    log_warn "curl is not installed. Install SwiftLint manually, then rerun this script."
+    return 1
+  fi
+  if ! command -v installer >/dev/null 2>&1; then
+    log_warn "macOS installer is not available. Install SwiftLint manually, then rerun this script."
+    return 1
+  fi
+
+  tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/repo-guard-swiftlint.XXXXXX")
+  pkg_file="$tmp_dir/SwiftLint.pkg"
+  if ! curl -fsSL -o "$pkg_file" \
+    "https://github.com/realm/SwiftLint/releases/latest/download/SwiftLint.pkg"; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  if ! sudo installer -pkg "$pkg_file" -target /; then
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  rm -rf "$tmp_dir"
+}
+
 install_with_brew() {
   local tool=$1
   case "$tool" in
@@ -894,8 +921,7 @@ install_with_brew() {
       brew install "$tool"
       ;;
     swiftlint)
-      log_warn "install swiftlint manually. Homebrew may require full Xcode, not just CLT."
-      return 1
+      install_swiftlint_pkg
       ;;
     bandit|radon|vulture|ansible-lint|djlint|pip-audit)
       install_python_cli "$tool"
@@ -1173,6 +1199,10 @@ install_missing_tools() {
       if [ -z "$tool" ]; then
         continue
       fi
+      if [ "$package_manager" = "brew" ] && [ "$tool" = "swiftlint" ]; then
+        log_info "would install $tool from official GitHub release package"
+        continue
+      fi
       log_info "would install $tool via $package_manager"
     done
     return
@@ -1180,6 +1210,11 @@ install_missing_tools() {
 
   for tool in "${missing_tools[@]-}"; do
     if [ -z "$tool" ]; then
+      continue
+    fi
+    if [ "$package_manager" = "brew" ] && [ "$tool" = "swiftlint" ]; then
+      log_info "installing $tool from official GitHub release package"
+      install_with_brew "$tool"
       continue
     fi
     log_info "installing $tool"

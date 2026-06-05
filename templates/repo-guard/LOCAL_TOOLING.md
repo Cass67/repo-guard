@@ -38,8 +38,8 @@ Install only the tools relevant to the languages enabled for this repo.
 - `swiftlint`
 
 Note: Homebrew's `swiftlint` formula may require a full Xcode install,
-not only Command Line Tools. Install full Xcode first or use SwiftLint's
-upstream release package.
+not only Command Line Tools. On macOS, `repo-guard --yes` installs SwiftLint
+from the official GitHub release package instead.
 
 ## C/C++
 - `cppcheck`
