@@ -1234,8 +1234,18 @@ apply_file_permissions() {
   local file
   for file in \
     "$repo_root/AGENTS.md" \
+    "$repo_root/renovate.json"; do
+    if [ ! -e "$file" ]; then
+      continue
+    fi
+    if [ "$dry_run" -eq 1 ]; then
+      log_info "would set mode 600 on $file"
+    else
+      chmod 600 "$file"
+    fi
+  done
+  for file in \
     "$repo_root/LOCAL_TOOLING.md" \
-    "$repo_root/renovate.json" \
     "$repo_root/.ignore" \
     "$repo_root/.rgignore" \
     "$repo_root/.gitignore" \
@@ -1244,9 +1254,9 @@ apply_file_permissions() {
       continue
     fi
     if [ "$dry_run" -eq 1 ]; then
-      log_info "would set mode 600 on $file"
+      log_info "would set mode 644 on $file"
     else
-      chmod 600 "$file"
+      chmod 644 "$file"
     fi
   done
 }

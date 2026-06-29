@@ -162,4 +162,38 @@ else
   exit 1
 fi
 
+# Permissions: secret-bearing files get 600; non-secret files get 644.
+test "$(stat -f '%Lp' "$target_repo/AGENTS.md")" = '600'
+test "$(stat -f '%Lp' "$target_repo/renovate.json")" = '600'
+test "$(stat -f '%Lp' "$target_repo/.gitignore")" = '644'
+test "$(stat -f '%Lp' "$target_repo/.ignore")" = '644'
+test "$(stat -f '%Lp' "$target_repo/.rgignore")" = '644'
+test "$(stat -f '%Lp' "$target_repo/.pre-commit-config.yaml")" = '644'
+test "$(stat -f '%Lp' "$target_repo/LOCAL_TOOLING.md")" = '644'
+
+# Upgrade preserves managed markers, drops legacy block even with changed hook entry.
+upgrade_legacy_repo="$tmp_root/upgrade-legacy-repo"
+mkdir -p "$upgrade_legacy_repo"
+cat >"$upgrade_legacy_repo/.pre-commit-config.yaml" <<'EOF'
+repos:
+  # repo-guard:base:start
+  - repo: local
+    hooks:
+      - id: risky-filenames
+        name: risky filenames
+        entry: bash -lc 'status=0; for f in "$@"; do case "$f" in .env|.env.*|*.env) printf "refusing %s\n" "$f"; status=1 ;; esac; done; exit "$status"' --
+        language: system
+  # repo-guard:base:end
+EOF
+"$script" --no-install --upgrade "$upgrade_legacy_repo" >/dev/null
+grep -Fq "# repo-guard:base:start" "$upgrade_legacy_repo/.pre-commit-config.yaml"
+if grep -Fq 'refusing %s' "$upgrade_legacy_repo/.pre-commit-config.yaml"; then
+  echo "upgrade did not remove legacy base block with changed hook entry" >&2
+  exit 1
+fi
+if grep -Fq '# repo-guard:python:start' "$upgrade_legacy_repo/.pre-commit-config.yaml"; then
+  echo "upgrade should not have added python block when no langs selected" >&2
+  exit 1
+fi
+
 echo "smoke test passed"
