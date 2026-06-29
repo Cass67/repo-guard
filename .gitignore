@@ -57,6 +57,8 @@ history.jsonl
 sessions/
 log/
 
+__pycache__/
+
 # OS and editor workspace noise.
 .DS_Store
 .AppleDouble
