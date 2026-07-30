@@ -32,6 +32,10 @@
           "$@"; else bandit -q "$@"; fi' --
         language: system
         files: \.pyi?$
+        # B101 (assert_used) fires on every pytest assert, which makes this hook
+        # unpassable for any commit that touches a test. Bandit audits shipped
+        # code; test files are not a deployment surface.
+        exclude: (^|/)tests?/|(^|/)test_[^/]*\.py$|(^|/)conftest\.py$
       - id: radon-cc
         name: radon complexity
         entry: >-
