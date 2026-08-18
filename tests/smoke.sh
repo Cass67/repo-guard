@@ -119,6 +119,9 @@ test -f "$git_target_repo/.git/hooks/pre-commit"
   git init -q
   printf 'safe\n' >safe.txt
   pre-commit run risky-filenames --files safe.txt >/dev/null
+  # eslint must skip (exit 0) when the repo has no ESLint config
+  printf 'export const x = 1;\n' >skip-lint.ts
+  pre-commit run eslint --files skip-lint.ts >/dev/null
 )
 
 if python3 - "$repo_root" <<'PY'; then

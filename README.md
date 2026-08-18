@@ -354,6 +354,8 @@ Language fragments currently add:
 - C/C++: `cppcheck`, with `clang-format` and `clang-tidy` when installed
 - JavaScript: local-or-global `eslint` and `prettier`
 - TypeScript: local-or-global `eslint`, `prettier`, and `tsc`
+
+The `eslint` hook skips (exit 0) when the target repo has no ESLint config, so it does not fail on repos that have not configured ESLint yet. It runs as soon as an `eslint.config.*` (or legacy `.eslintrc*`, or `package.json` `eslintConfig`) is present.
 - Ansible: `yamllint`, `ansible-lint`, and `djlint`
 - Containers: `trivy fs` and `trivy config`
 

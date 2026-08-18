@@ -25,11 +25,12 @@
       - id: bandit
         name: bandit
         entry: >-
-          bash -lc 'if [ -n "${VIRTUAL_ENV:-}" ] && [ -x
-          "$VIRTUAL_ENV/bin/bandit" ]; then "$VIRTUAL_ENV/bin/bandit" -q
+          bash -lc 'if [ -f bandit.yaml ]; then conf="-c bandit.yaml"; else
+          conf=""; fi; if [ -n "${VIRTUAL_ENV:-}" ] && [ -x
+          "$VIRTUAL_ENV/bin/bandit" ]; then "$VIRTUAL_ENV/bin/bandit" -q $conf
           "$@"; elif [ -x ./.venv/bin/bandit ]; then ./.venv/bin/bandit -q
-          "$@"; elif [ -x ./venv/bin/bandit ]; then ./venv/bin/bandit -q
-          "$@"; else bandit -q "$@"; fi' --
+          $conf "$@"; elif [ -x ./venv/bin/bandit ]; then ./venv/bin/bandit
+          -q $conf "$@"; else bandit -q $conf "$@"; fi' --
         language: system
         files: \.pyi?$
         # B101 (assert_used) fires on every pytest assert, which makes this hook
@@ -61,15 +62,15 @@
       - id: pip-audit
         name: pip audit
         entry: >-
-          bash -lc 'if [ -n "${VIRTUAL_ENV:-}" ] && [ -x
+          bash -lc 'if [ ! -f requirements.txt ] && [ ! -f pyproject.toml ];
+          then echo "no Python dependency manifest found, skipping pip-audit";
+          elif [ -n "${VIRTUAL_ENV:-}" ] && [ -x
           "$VIRTUAL_ENV/bin/pip-audit" ]; then "$VIRTUAL_ENV/bin/pip-audit"
           -r requirements.txt; elif [ -x ./.venv/bin/pip-audit ]; then
           ./.venv/bin/pip-audit -r requirements.txt; elif [ -x
           ./venv/bin/pip-audit ]; then ./venv/bin/pip-audit -r
           requirements.txt; elif [ -f requirements.txt ]; then pip-audit -r
-          requirements.txt; elif [ -f pyproject.toml ]; then pip-audit; else
-          echo "no Python dependency manifest found, skipping pip-audit";
-          fi'
+          requirements.txt; elif [ -f pyproject.toml ]; then pip-audit; fi' --
         language: system
         pass_filenames: false
 # repo-guard:python:end

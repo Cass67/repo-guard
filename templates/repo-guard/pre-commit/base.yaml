@@ -8,6 +8,11 @@
             status=0
             for f in "$@"; do
               case "$f" in
+                .env.example|.env.sample|.env.template)
+                  # Placeholder templates are meant to be committed; the
+                  # *env* globs below would otherwise block them.
+                  continue
+                  ;;
                 .env|.env.*|*.env|*env*|*.local|*.secret|*.secrets|*.token|*.tokens)
                   printf "refusing risky path=%s\n" "$f"
                   status=1
