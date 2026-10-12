@@ -348,7 +348,7 @@ Base hooks currently include:
 Language fragments currently add:
 
 - Python: `ruff`, `bandit`, `radon`, `vulture`, `pip-audit`
-- Go: `gofmt`, `goimports`, `go vet`, `golangci-lint`, `govulncheck`
+- Go: `gofmt`, `goimports`, `go vet`, `go test`, `golangci-lint`, `govulncheck`
 - Bash: `shfmt`, `shellcheck`, `bash -n`
 - Rust: `cargo fmt`, `cargo clippy`, `cargo audit`
 - C/C++: `cppcheck`, with `clang-format` and `clang-tidy` when installed

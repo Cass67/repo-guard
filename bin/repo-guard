@@ -407,9 +407,9 @@ cleanup_legacy_precommit_blocks() {
       common_hook_count = 0
       signature_count = 0
       block_is_managed = 0
-      unique_hook = "^(      - id: )(risky-filenames|merge-conflict|trailing-whitespace|detect-private-key|ruff-check|ruff-format|radon-cc|vulture|go-vet|golangci-lint|govulncheck|bash-syntax|cargo-fmt|cargo-clippy|cargo-audit|swiftformat|swiftlint|tsc-noemit|ansible-lint|djlint)$"
+      unique_hook = "^(      - id: )(risky-filenames|merge-conflict|trailing-whitespace|detect-private-key|ruff-check|ruff-format|radon-cc|vulture|go-vet|go-test|golangci-lint|govulncheck|bash-syntax|cargo-fmt|cargo-clippy|cargo-audit|swiftformat|swiftlint|tsc-noemit|ansible-lint|djlint)$"
       common_hook = "^(      - id: )(gitleaks|bandit|gofmt|goimports|shfmt|shellcheck|clang-format|clang-tidy|cppcheck|eslint|prettier|yamllint)$"
-      repo_guard_signature = "(gitleaks git --pre-commit --staged --redact|\\$VIRTUAL_ENV/bin/ruff|\\./\\.venv/bin/ruff|\\./node_modules/\\.bin/(eslint|prettier|tsc)|golangci-lint run|govulncheck \\./\\.\\.\\.|cargo fmt --all -- --check|cargo clippy --all-targets --all-features -- -D warnings|swiftformat --lint|swiftlint lint|ansible-lint \\.|djlint --check)"
+      repo_guard_signature = "(gitleaks git --pre-commit --staged --redact|\\$VIRTUAL_ENV/bin/ruff|\\./\\.venv/bin/ruff|\\./node_modules/\\.bin/(eslint|prettier|tsc)|golangci-lint run( --new-from-rev=HEAD)?|govulncheck \\./\\.\\.\\.|cargo fmt --all -- --check|cargo clippy --all-targets --all-features -- -D warnings|swiftformat --lint|swiftlint lint|ansible-lint \\.|djlint --check)"
     }
 
     /^# repo-guard:[^:]+:start$/ {
