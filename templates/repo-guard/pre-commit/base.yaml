@@ -7,53 +7,45 @@
           bash -lc '
             status=0
             for f in "$@"; do
-              case "$f" in
+              b=${f##*/}
+              case "$b" in
                 .env.example|.env.sample|.env.template)
-                  # Placeholder templates are meant to be committed; the
-                  # *env* globs below would otherwise block them.
+                  # Placeholder templates are meant to be committed, at any depth;
+                  # the *env* globs below would otherwise block them.
                   continue
                   ;;
-                .env|.env.*|*.env|*env*|*.local|*.secret|*.secrets|*.token|*.tokens)
-                  printf "refusing risky path=%s\n" "$f"
-                  status=1
-                  ;;
-                *.pem|*.key|*.p12|*.pfx|*.crt|*.csr|*.ovpn|*.asc|*.kdbx|*.sqlite|*.sqlite3)
-                  printf "refusing risky path=%s\n" "$f"
-                  status=1
-                  ;;
-                *.db|*.rdb|*.bak|*.backup|*.gpg|*.age|id_rsa|id_rsa.*|id_ed25519|id_ed25519.*)
-                  printf "refusing risky path=%s\n" "$f"
-                  status=1
-                  ;;
-                known_hosts|authorized_keys|auth.json|auth.json.*|credentials|credentials.*)
-                  printf "refusing risky path=%s\n" "$f"
-                  status=1
-                  ;;
-                secrets|secrets.*|.npmrc|.pypirc|.netrc|.docker/config.json|.envrc|.aws/*|.ssh/*)
-                  printf "refusing risky path=%s\n" "$f"
-                  status=1
-                  ;;
-                .gnupg/*|.config/*|Library/Keychains/*|history.jsonl|sessions/*|log/*)
-                  printf "refusing risky path=%s\n" "$f"
-                  status=1
-                  ;;
-                Library/Application\ Support/Google/Chrome/*)
-                  printf "refusing risky path=%s\n" "$f"
-                  status=1
-                  ;;
-                Library/Application\ Support/Chromium/*)
-                  printf "refusing risky path=%s\n" "$f"
-                  status=1
-                  ;;
-                Library/Application\ Support/BraveSoftware/*)
-                  printf "refusing risky path=%s\n" "$f"
-                  status=1
-                  ;;
-                Library/Application\ Support/Firefox/*)
-                  printf "refusing risky path=%s\n" "$f"
-                  status=1
-                  ;;
               esac
+              risky=0
+              # Name patterns are checked against the basename as well as the
+              # full path, so deploy/id_rsa is caught like id_rsa.
+              for p in "$b" "$f"; do
+                case "$p" in
+                  .env|.env.*|*.env|*env*|*.local|*.secret|*.secrets|*.token|*.tokens) risky=1 ;;
+                  *.pem|*.key|*.p12|*.pfx|*.crt|*.csr|*.ovpn|*.asc|*.kdbx) risky=1 ;;
+                  *.jks|*.keystore) risky=1 ;;
+                  *.sqlite|*.sqlite3|*.db|*.rdb|*.bak|*.backup|*.gpg|*.age) risky=1 ;;
+                  *.tfstate|*.tfstate.*|kubeconfig|*.kubeconfig|.htpasswd) risky=1 ;;
+                  id_rsa|id_rsa.*|id_ed25519|id_ed25519.*) risky=1 ;;
+                  id_ecdsa|id_ecdsa.*|id_dsa|id_dsa.*) risky=1 ;;
+                  known_hosts|authorized_keys|auth.json|auth.json.*) risky=1 ;;
+                  credentials|credentials.*) risky=1 ;;
+                  secrets|secrets.*|.npmrc|.pypirc|.netrc|.envrc|.git-credentials) risky=1 ;;
+                  history.jsonl) risky=1 ;;
+                esac
+              done
+              # Directory patterns match at any depth, like the .gitignore template.
+              case "/$f" in
+                */.docker/config.json|*/.aws/*|*/.ssh/*|*/.gnupg/*|*/.config/*) risky=1 ;;
+                */Library/Keychains/*|*/sessions/*|*/log/*) risky=1 ;;
+                */Library/Application\ Support/Google/Chrome/*) risky=1 ;;
+                */Library/Application\ Support/Chromium/*) risky=1 ;;
+                */Library/Application\ Support/BraveSoftware/*) risky=1 ;;
+                */Library/Application\ Support/Firefox/*) risky=1 ;;
+              esac
+              if [ "$risky" -eq 1 ]; then
+                printf "refusing risky path=%s\n" "$f"
+                status=1
+              fi
             done
             exit "$status"
           ' --

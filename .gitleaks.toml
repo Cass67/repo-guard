@@ -1,0 +1,31 @@
+# repo-guard:managed (delete this line to keep local edits across --upgrade)
+# Installed by repo-guard. Default gitleaks rules miss low-entropy literals such as
+# `POSTGRES_PASSWORD: somepass`. Config files must reference ${VAR} from an untracked .env,
+# with no secret default after :- (a default is a committed secret too).
+[extend]
+useDefault = true
+
+[[rules]]
+id = "literal-config-secret"
+description = "Literal value on a password/secret/salt key in a config file; use ${VAR} from .env"
+path = '''(?i)(\.ya?ml|\.toml|\.json|\.conf|\.ini|Caddyfile[^/]*|\.env\.example)$'''
+regex = '''(?i)\b[a-z0-9_]*(password|passwd|secret|salt)[a-z0-9_]*["']?[ \t]*[:=][ \t]*["']?([^\s"'$<{?\-][^\s"',}]{3,})'''
+secretGroup = 2
+entropy = 0
+
+[[rules]]
+id = "secret-env-default"
+description = "Secret given a literal default in ${VAR:-default}; require it from .env instead"
+regex = '''(?i)\$\{[a-z0-9_]*(password|passwd|secret|salt|token)[a-z0-9_]*:?-([^}\s<$][^}\s]{3,})\}'''
+secretGroup = 2
+entropy = 0
+
+[[rules]]
+id = "url-embedded-password"
+description = "Password embedded in a connection URL"
+regex = '''[a-z][a-z0-9+.-]*://[^:/@\s"']+:([^@\s"'$<{][^@\s"']*)@'''
+secretGroup = 1
+entropy = 0
+
+[allowlist]
+paths = ['''(^|/)(__pycache__|node_modules|\.venv)/''']

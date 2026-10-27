@@ -145,7 +145,11 @@ def parse_config_file(path: Path) -> ParsedConfig:
             data.setdefault(section, {})[key] = parsed_value
             continue
 
-        if section in ("audit", "scanning") and current_list_key == "__ignored_nested__" and indent == 4:
+        if (
+            section in ("audit", "scanning")
+            and current_list_key == "__ignored_nested__"
+            and indent == 4
+        ):
             continue
 
         if section == "audit" and current_list_key == "exclude" and indent == 4:
@@ -200,7 +204,11 @@ def validate_config_types(path: Path, data: dict[str, Any]) -> None:
             raise ValueError(f"{path}: audit.output_dir must be a string")
         if "deep" in audit and not isinstance(audit["deep"], bool):
             raise ValueError(f"{path}: audit.deep must be a boolean")
-        if "baseline_file" in audit and audit["baseline_file"] is not None and not isinstance(audit["baseline_file"], str):
+        if (
+            "baseline_file" in audit
+            and audit["baseline_file"] is not None
+            and not isinstance(audit["baseline_file"], str)
+        ):
             raise ValueError(f"{path}: audit.baseline_file must be a string")
 
     scanning = data.get("scanning")
@@ -469,13 +477,19 @@ def build_repo_result(payload: dict[str, Any]) -> dict[str, Any]:
 def main(argv: list[str]) -> int:
     try:
         if len(argv) < 2:
-            print("usage: repo_guard_runtime.py <resolve-run-config|build-repo-result> ...", file=sys.stderr)
+            print(
+                "usage: repo_guard_runtime.py <resolve-run-config|build-repo-result> ...",
+                file=sys.stderr,
+            )
             return 2
 
         command = argv[1]
         if command == "resolve-run-config":
             if len(argv) != 3:
-                print("usage: repo_guard_runtime.py resolve-run-config <repo-config-path>", file=sys.stderr)
+                print(
+                    "usage: repo_guard_runtime.py resolve-run-config <repo-config-path>",
+                    file=sys.stderr,
+                )
                 return 2
             parsed = parse_config_file(Path(argv[2]))
             merged = merge_configs({}, parsed.data)
@@ -492,7 +506,10 @@ def main(argv: list[str]) -> int:
 
         if command == "build-repo-result":
             if len(argv) != 3:
-                print("usage: repo_guard_runtime.py build-repo-result <payload-json-path>", file=sys.stderr)
+                print(
+                    "usage: repo_guard_runtime.py build-repo-result <payload-json-path>",
+                    file=sys.stderr,
+                )
                 return 2
             payload = json.loads(Path(argv[2]).read_text())
             print(json.dumps(build_repo_result(payload)))

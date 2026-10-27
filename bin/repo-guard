@@ -5,6 +5,7 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 tool_root="$(cd -- "$script_dir/.." && pwd)"
 template_dir="$tool_root/templates/repo-guard"
+managed_marker="# repo-guard:managed (delete this line to keep local edits across --upgrade)"
 precommit_dir="$template_dir/pre-commit"
 repo_root="$PWD"
 langs_csv=""
@@ -19,7 +20,7 @@ upgrade_mode=0
 detect_mode=0
 run_deep=0
 run_json=0
-audit_output_dir=""
+guard_failed=0
 container_fs_exit=0
 container_config_exit=0
 container_build_exit=0
@@ -157,17 +158,17 @@ append_missing_lines() {
   while IFS= read -r line || [ -n "$line" ]; do
     if [ -z "$line" ]; then
       if [ -s "$tmp_file" ] && [ "$(tail -n 1 "$tmp_file")" != "" ]; then
-        printf '\n' >> "$tmp_file"
+        printf '\n' >>"$tmp_file"
         changed=1
       fi
       continue
     fi
 
     if ! grep -Fqx -- "$line" "$tmp_file"; then
-      printf '%s\n' "$line" >> "$tmp_file"
+      printf '%s\n' "$line" >>"$tmp_file"
       changed=1
     fi
-  done < "$template_file"
+  done <"$template_file"
 
   if [ "$changed" -eq 0 ]; then
     rm -f "$tmp_file"
@@ -205,8 +206,8 @@ append_template_if_missing_header() {
     return
   fi
 
-  printf '\n' >> "$target_file"
-  cat "$template_file" >> "$target_file"
+  printf '\n' >>"$target_file"
+  cat "$template_file" >>"$target_file"
 }
 
 next_agents_archive_path() {
@@ -247,7 +248,7 @@ write_repo_guard_agents() {
       next
     }
     { print }
-  ' "$template_file" > "$target_file"
+  ' "$template_file" >"$target_file"
 }
 
 install_repo_guard_agents() {
@@ -290,7 +291,7 @@ ensure_precommit_file() {
     if [ "$dry_run" -eq 1 ]; then
       log_info "would create $target_file with top-level repos: key"
     else
-      printf 'repos:\n' > "$target_file"
+      printf 'repos:\n' >"$target_file"
     fi
     return
   fi
@@ -306,6 +307,7 @@ append_precommit_fragment() {
   local marker=$2
   local target_file=$3
   if [ -f "$target_file" ] && grep -Fqx -- "$marker" "$target_file"; then
+    warn_if_block_stale "$fragment_file" "$target_file"
     return
   fi
 
@@ -315,9 +317,54 @@ append_precommit_fragment() {
   fi
 
   if [ -s "$target_file" ]; then
-    printf '\n' >> "$target_file"
+    printf '\n' >>"$target_file"
   fi
-  cat "$fragment_file" >> "$target_file"
+  cat "$fragment_file" >>"$target_file"
+}
+
+warn_if_block_stale() {
+  local fragment_file=$1
+  local target_file=$2
+  local start_marker
+  local end_marker
+  start_marker=$(sed -n '1p' "$fragment_file")
+  end_marker=$(tail -n 1 "$fragment_file")
+  if ! awk -v start="$start_marker" -v end="$end_marker" '
+    $0 == start { in_block = 1 }
+    in_block { print }
+    $0 == end { in_block = 0 }
+  ' "$target_file" | cmp -s - "$fragment_file"; then
+    log_warn "managed block $start_marker in $target_file is outdated; rerun with --upgrade"
+  fi
+}
+
+# Install a repo-guard managed file. Files carrying the managed marker line are
+# refreshed on --upgrade; deleting that line opts a file out and keeps local edits.
+install_managed_file() {
+  local template=$1
+  local target=$2
+  if [ ! -f "$target" ]; then
+    if [ "$dry_run" -eq 1 ]; then
+      log_info "would create $target"
+    else
+      mkdir -p "$(dirname "$target")"
+      cp "$template" "$target"
+    fi
+    return
+  fi
+  if cmp -s "$template" "$target"; then
+    return
+  fi
+  if ! grep -Fqx "$managed_marker" "$target"; then
+    return
+  fi
+  if [ "$upgrade_mode" -ne 1 ]; then
+    log_warn "$target is outdated; rerun with --upgrade"
+  elif [ "$dry_run" -eq 1 ]; then
+    log_info "would refresh $target"
+  else
+    cp "$template" "$target"
+  fi
 }
 
 replace_precommit_fragment() {
@@ -363,7 +410,7 @@ replace_precommit_fragment() {
       next
     }
     { print }
-  ' "$target_file" > "$tmp_file"
+  ' "$target_file" >"$tmp_file"
   mv "$tmp_file" "$target_file"
 }
 
@@ -456,7 +503,7 @@ cleanup_legacy_precommit_blocks() {
     END {
       flush_block()
     }
-  ' "$target_file" > "$tmp_file"
+  ' "$target_file" >"$tmp_file"
   mv "$tmp_file" "$target_file"
 }
 
@@ -468,8 +515,8 @@ normalize_lang() {
     py) printf 'python\n' ;;
     js) printf 'javascript\n' ;;
     ts) printf 'typescript\n' ;;
-    sh|shell) printf 'bash\n' ;;
-    c|cpp|cxx) printf 'c\n' ;;
+    sh | shell) printf 'bash\n' ;;
+    c | cpp | cxx) printf 'c\n' ;;
     *) printf '%s\n' "$lang" ;;
   esac
 }
@@ -478,7 +525,7 @@ add_selected_lang() {
   local lang=$1
 
   case "$lang" in
-    python|go|bash|rust|c|swift|javascript|typescript|ansible|containers)
+    python | go | bash | rust | c | swift | javascript | typescript | ansible | containers)
       if ! contains_element "$lang" "${selected_langs[@]:-}"; then
         selected_langs+=("$lang")
       fi
@@ -725,7 +772,7 @@ minimum_version_for_tool() {
   case "$1" in
     pre-commit) printf '3.6.0\n' ;;
     rg) printf '13.0.0\n' ;;
-    gitleaks) printf '8.18.0\n' ;;
+    gitleaks) printf '8.19.0\n' ;;
     ruff) printf '0.5.0\n' ;;
     bandit) printf '1.7.8\n' ;;
     radon) printf '6.0.1\n' ;;
@@ -760,10 +807,10 @@ installed_version_for_tool() {
   local raw=""
 
   case "$tool" in
-    pre-commit|rg|gitleaks|ruff|go|golangci-lint|shfmt|cppcheck|swiftformat|swiftlint|eslint|prettier|tsc|yamllint|ansible-lint|djlint|pip-audit|trivy)
+    pre-commit | rg | gitleaks | ruff | go | golangci-lint | shfmt | cppcheck | swiftformat | swiftlint | eslint | prettier | tsc | yamllint | ansible-lint | djlint | pip-audit | trivy)
       raw=$("$tool" --version 2>&1 | head -n 1 || true)
       ;;
-    bandit|radon|vulture|cargo|cargo-audit)
+    bandit | radon | vulture | cargo | cargo-audit)
       raw=$("$tool" --version 2>&1 | head -n 1 || true)
       ;;
     shellcheck)
@@ -783,8 +830,8 @@ version_ge() {
   local left_parts right_parts max_len i
   local IFS=.
 
-  read -r -a left_parts <<< "$left"
-  read -r -a right_parts <<< "$right"
+  read -r -a left_parts <<<"$left"
+  read -r -a right_parts <<<"$right"
 
   if [ "${#left_parts[@]}" -gt "${#right_parts[@]}" ]; then
     max_len=${#left_parts[@]}
@@ -917,13 +964,13 @@ install_swiftlint_pkg() {
 install_with_brew() {
   local tool=$1
   case "$tool" in
-    pre-commit|rg|gitleaks|ruff|golangci-lint|shfmt|shellcheck|cppcheck|swiftformat|yamllint|trivy)
+    pre-commit | rg | gitleaks | ruff | golangci-lint | shfmt | shellcheck | cppcheck | swiftformat | yamllint | trivy)
       brew install "$tool"
       ;;
     swiftlint)
       install_swiftlint_pkg
       ;;
-    bandit|radon|vulture|ansible-lint|djlint|pip-audit)
+    bandit | radon | vulture | ansible-lint | djlint | pip-audit)
       install_python_cli "$tool"
       ;;
     go)
@@ -942,10 +989,10 @@ install_with_brew() {
     cargo-audit)
       cargo install cargo-audit
       ;;
-    clang-format|clang-tidy)
+    clang-format | clang-tidy)
       brew install llvm
       ;;
-    eslint|prettier)
+    eslint | prettier)
       install_node_cli "$tool"
       ;;
     tsc)
@@ -963,7 +1010,7 @@ install_with_brew() {
 install_with_apt() {
   local tool=$1
   case "$tool" in
-    pre-commit|shellcheck|cppcheck)
+    pre-commit | shellcheck | cppcheck)
       sudo apt-get update
       sudo apt-get install -y "$tool"
       ;;
@@ -975,7 +1022,7 @@ install_with_apt() {
       log_warn "install gitleaks manually, then rerun this script."
       return 1
       ;;
-    ruff|bandit|radon|vulture|yamllint|ansible-lint|djlint|pip-audit)
+    ruff | bandit | radon | vulture | yamllint | ansible-lint | djlint | pip-audit)
       install_python_cli "$tool"
       ;;
     trivy)
@@ -1007,15 +1054,15 @@ install_with_apt() {
     cargo-audit)
       cargo install cargo-audit
       ;;
-    clang-format|clang-tidy)
+    clang-format | clang-tidy)
       sudo apt-get update
       sudo apt-get install -y "$tool"
       ;;
-    swiftformat|swiftlint)
+    swiftformat | swiftlint)
       log_warn "install $tool manually, then rerun this script."
       return 1
       ;;
-    eslint|prettier)
+    eslint | prettier)
       install_node_cli "$tool"
       ;;
     tsc)
@@ -1033,7 +1080,7 @@ install_with_apt() {
 install_with_dnf() {
   local tool=$1
   case "$tool" in
-    pre-commit|shellcheck|cppcheck|shfmt)
+    pre-commit | shellcheck | cppcheck | shfmt)
       sudo dnf install -y "$tool"
       ;;
     rg)
@@ -1043,7 +1090,7 @@ install_with_dnf() {
       log_warn "install gitleaks manually, then rerun this script."
       return 1
       ;;
-    ruff|bandit|radon|vulture|yamllint|ansible-lint|djlint|pip-audit)
+    ruff | bandit | radon | vulture | yamllint | ansible-lint | djlint | pip-audit)
       install_python_cli "$tool"
       ;;
     trivy)
@@ -1070,14 +1117,14 @@ install_with_dnf() {
     cargo-audit)
       cargo install cargo-audit
       ;;
-    clang-format|clang-tidy)
+    clang-format | clang-tidy)
       sudo dnf install -y "$tool"
       ;;
-    swiftformat|swiftlint)
+    swiftformat | swiftlint)
       log_warn "install $tool manually, then rerun this script."
       return 1
       ;;
-    eslint|prettier)
+    eslint | prettier)
       install_node_cli "$tool"
       ;;
     tsc)
@@ -1095,7 +1142,7 @@ install_with_dnf() {
 install_with_pacman() {
   local tool=$1
   case "$tool" in
-    pre-commit|shellcheck|cppcheck|shfmt)
+    pre-commit | shellcheck | cppcheck | shfmt)
       sudo pacman -S --noconfirm "$tool"
       ;;
     rg)
@@ -1105,7 +1152,7 @@ install_with_pacman() {
       log_warn "install gitleaks manually, then rerun this script."
       return 1
       ;;
-    ruff|bandit|radon|vulture|yamllint|ansible-lint|djlint|pip-audit)
+    ruff | bandit | radon | vulture | yamllint | ansible-lint | djlint | pip-audit)
       install_python_cli "$tool"
       ;;
     trivy)
@@ -1131,14 +1178,14 @@ install_with_pacman() {
     cargo-audit)
       cargo install cargo-audit
       ;;
-    clang-format|clang-tidy)
+    clang-format | clang-tidy)
       sudo pacman -S --noconfirm clang
       ;;
-    swiftformat|swiftlint)
+    swiftformat | swiftlint)
       log_warn "install $tool manually, then rerun this script."
       return 1
       ;;
-    eslint|prettier)
+    eslint | prettier)
       install_node_cli "$tool"
       ;;
     tsc)
@@ -1263,7 +1310,13 @@ apply_file_permissions() {
 }
 
 install_precommit_hook() {
-  if [ ! -d "$repo_root/.git" ] || ! command -v pre-commit >/dev/null 2>&1; then
+  if [ ! -e "$repo_root/.git" ]; then
+    return
+  fi
+
+  if ! command -v pre-commit >/dev/null 2>&1; then
+    log_warn "pre-commit is not installed: NO hooks are active in $repo_root and nothing blocks secrets; install pre-commit and rerun"
+    guard_failed=1
     return
   fi
 
@@ -1272,10 +1325,55 @@ install_precommit_hook() {
     return
   fi
 
-  (
-    cd "$repo_root"
-    pre-commit install >/dev/null
-  )
+  if ! (cd "$repo_root" && pre-commit install >/dev/null); then
+    log_warn "pre-commit install failed in $repo_root (core.hooksPath set?): NO hooks are active"
+    guard_failed=1
+  fi
+}
+
+# The hooks only see new commits; anything leaked before bootstrap stays invisible
+# unless the existing history is scanned once.
+scan_git_history() {
+  local report
+  local findings
+  if [ ! -e "$repo_root/.git" ] || ! git -C "$repo_root" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+    return
+  fi
+  if ! command -v gitleaks >/dev/null 2>&1; then
+    log_warn "gitleaks is not installed: existing git history was not scanned for secrets"
+    guard_failed=1
+    return
+  fi
+  if [ "$dry_run" -eq 1 ]; then
+    log_info "would scan git history of $repo_root with gitleaks"
+    return
+  fi
+  report=$(mktemp "${TMPDIR:-/tmp}/repo-guard-leaks.XXXXXX")
+  if (cd "$repo_root" && gitleaks git --no-banner --redact --log-opts=--all \
+    --report-format json --report-path "$report" . >/dev/null 2>&1); then
+    rm -f "$report"
+    return
+  fi
+  findings=$(grep -c '"RuleID"' "$report" || true)
+  rm -f "$report"
+  if [ "${findings:-0}" -gt 0 ]; then
+    log_warn "gitleaks found $findings secret(s) in existing git history of $repo_root; review with: gitleaks git --redact -v --log-opts=--all ."
+  else
+    log_warn "gitleaks history scan failed in $repo_root"
+  fi
+  guard_failed=1
+}
+
+# A server-side check catches what local hooks cannot: --no-verify, machines
+# without hooks installed, and edits made through the web UI.
+install_ci_workflow() {
+  if [ ! -e "$repo_root/.git" ]; then
+    return
+  fi
+  if ! git -C "$repo_root" remote -v 2>/dev/null | grep -q 'github\.com[:/]'; then
+    return
+  fi
+  install_managed_file "$template_dir/github-workflow.yml" "$repo_root/.github/workflows/repo-guard.yml"
 }
 
 ensure_git_repo() {
@@ -1626,9 +1724,7 @@ run_command() {
           : >"$fs_stderr"
           : >"$config_stdout"
           : >"$config_stderr"
-          if run_container_checks "$target" "$severity" 1 "$fs_stdout" "$fs_stderr" "$config_stdout" "$config_stderr"; then
-            status=$status
-          else
+          if ! run_container_checks "$target" "$severity" 1 "$fs_stdout" "$fs_stderr" "$config_stdout" "$config_stderr"; then
             status=1
           fi
           if [ "$container_fs_exit" -ne 0 ] || [ -s "$fs_stdout" ] || [ -s "$fs_stderr" ]; then
@@ -1646,9 +1742,7 @@ run_command() {
             : >"$image_stderr"
             : >"$build_stdout"
             : >"$build_stderr"
-            if run_container_deep "$target" "$severity" "$image_name" 1 "$image_stdout" "$image_stderr" "$build_stdout" "$build_stderr"; then
-              status=$status
-            else
+            if ! run_container_deep "$target" "$severity" "$image_name" 1 "$image_stdout" "$image_stderr" "$build_stdout" "$build_stderr"; then
               status=1
             fi
             if [ "$container_build_exit" -ne 0 ]; then
@@ -1718,10 +1812,10 @@ PY
       return 1
     fi
     case "$final_status" in
-      clean|skipped)
+      clean | skipped)
         final_exit=0
         ;;
-      issues|error)
+      issues | error)
         final_exit=1
         ;;
       *)
@@ -1761,7 +1855,7 @@ fi
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --help|-h)
+    --help | -h)
       show_help
       exit 0
       ;;
@@ -1849,7 +1943,7 @@ fi
 resolve_repo_root
 
 if [ -n "$langs_csv" ]; then
-  IFS=',' read -r -a local_langs <<< "$langs_csv"
+  IFS=',' read -r -a local_langs <<<"$langs_csv"
   for raw_lang in "${local_langs[@]}"; do
     lang=$(printf '%s' "$raw_lang" | tr -d '[:space:]')
     if [ -z "$lang" ]; then
@@ -1910,13 +2004,7 @@ if [ ! -f "$repo_root/renovate.json" ]; then
     cp "$template_dir/renovate.json" "$repo_root/renovate.json"
   fi
 fi
-if [ ! -f "$repo_root/.gitleaks.toml" ]; then
-  if [ "$dry_run" -eq 1 ]; then
-    log_info "would create $repo_root/.gitleaks.toml"
-  else
-    cp "$template_dir/.gitleaks.toml" "$repo_root/.gitleaks.toml"
-  fi
-fi
+install_managed_file "$template_dir/.gitleaks.toml" "$repo_root/.gitleaks.toml"
 ensure_precommit_file "$repo_root/.pre-commit-config.yaml"
 if [ "$upgrade_mode" -eq 1 ]; then
   cleanup_legacy_precommit_blocks "$repo_root/.pre-commit-config.yaml"
@@ -1950,6 +2038,8 @@ apply_file_permissions
 install_missing_tools
 ensure_git_repo
 install_precommit_hook
+install_ci_workflow
+scan_git_history
 
 if [ "${#selected_langs[@]}" -gt 0 ]; then
   langs_display=$(join_langs "${selected_langs[@]}")
@@ -1971,4 +2061,9 @@ else
   else
     log_info "secured repo defaults in $repo_root with base hooks"
   fi
+fi
+
+if [ "$guard_failed" -ne 0 ]; then
+  log_warn "repo-guard is NOT fully protecting $repo_root; fix the warnings above"
+  exit 1
 fi

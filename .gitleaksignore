@@ -1,0 +1,5 @@
+# Test fixtures and a README example committed in 6f2f66a, before this repo's own
+# .gitleaks.toml existed. Not secrets; current copies carry gitleaks:allow.
+6f2f66a9d85dabd6ef7cced71bd325112b797327:README.md:secret-env-default:347
+6f2f66a9d85dabd6ef7cced71bd325112b797327:tests/smoke.sh:secret-env-default:215
+6f2f66a9d85dabd6ef7cced71bd325112b797327:tests/smoke.sh:url-embedded-password:216

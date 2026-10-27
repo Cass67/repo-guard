@@ -48,7 +48,7 @@ Install only the tools relevant to the languages enabled for this repo.
 - `tsc` for TypeScript repos
 
 ## Minimum Tested Versions
-- Base: `pre-commit >= 3.6.0`, `rg >= 13.0.0`, `gitleaks >= 8.18.0`
+- Base: `pre-commit >= 3.6.0`, `rg >= 13.0.0`, `gitleaks >= 8.19.0`
 - Python: `ruff >= 0.5.0`, `bandit >= 1.7.8`, `radon >= 6.0.1`, `vulture >= 2.11`
 - Go: `go >= 1.22.0`, `golangci-lint >= 1.59.0`
 - Bash: `shfmt >= 3.8.0`, `shellcheck >= 0.9.0`

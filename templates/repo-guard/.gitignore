@@ -57,6 +57,22 @@ history.jsonl
 sessions/
 log/
 /.repo-guard/reports/
+*.jks
+*.keystore
+*.tfstate
+*.tfstate.*
+kubeconfig
+*.kubeconfig
+.htpasswd
+.git-credentials
+id_ecdsa
+id_ecdsa.*
+id_dsa
+id_dsa.*
+# Placeholder env templates are meant to be committed (the hook allows them too).
+!.env.example
+!.env.sample
+!.env.template
 
 # OS and editor workspace noise.
 .DS_Store

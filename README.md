@@ -77,6 +77,10 @@ Bootstrap mode behavior:
 - `--upgrade` only refreshes `repo-guard` managed blocks that are already marked in `.pre-commit-config.yaml`.
 - `--check-tools` exits `1` when a required tool is missing or below the minimum tested version; otherwise it exits `0`.
 - `--check-tools` also accepts a shorthand language CSV immediately after the flag, for example `bin/repo-guard --check-tools python,containers`.
+- Bootstrap exits `1` with a warning when the repo is not actually protected: `pre-commit` is missing or `pre-commit install` failed (for example with `core.hooksPath` set), `gitleaks` is missing, or the existing git history already contains secrets. Files are still written; the exit code says the guard is not live yet.
+- Existing history is scanned once with `gitleaks git --log-opts=--all` and the repo's `.gitleaks.toml`, because the hooks only ever see new commits.
+- When `origin` is on GitHub, bootstrap also writes `.github/workflows/repo-guard.yml`, which reruns `risky-filenames` and a full-history gitleaks scan server-side. That catches commits made with `--no-verify`, from machines without the hooks, or in the web UI.
+- `.gitleaks.toml` and the workflow carry a `# repo-guard:managed` marker line. Reruns warn when they are outdated and `--upgrade` refreshes them; delete the marker line to keep local edits. Managed `.pre-commit-config.yaml` blocks that differ from the templates are reported the same way.
 
 Examples:
 
@@ -339,12 +343,12 @@ Important file behavior:
 
 Base hooks currently include:
 
-- risky filename detection for likely secret-bearing files
+- risky filename detection for likely secret-bearing files, matched by basename and at any directory depth (`deploy/id_rsa` and `infra/.ssh/*` are caught; `.env.example`, `.env.sample` and `.env.template` are allowed anywhere)
 - merge conflict marker detection
 - trailing whitespace detection
 - private key marker detection
 - `gitleaks` over staged changes, with a `.gitleaks.toml` that also flags low-entropy config
-  secrets (`PASSWORD: literal`, `${SECRET:-default}`, passwords in connection URLs)
+  secrets (`PASSWORD: literal`, secret defaults after `:-`, passwords in connection URLs)
 
 Language fragments currently add:
 

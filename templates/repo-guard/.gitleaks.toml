@@ -1,3 +1,4 @@
+# repo-guard:managed (delete this line to keep local edits across --upgrade)
 # Installed by repo-guard. Default gitleaks rules miss low-entropy literals such as
 # `POSTGRES_PASSWORD: somepass`. Config files must reference ${VAR} from an untracked .env,
 # with no secret default after :- (a default is a committed secret too).

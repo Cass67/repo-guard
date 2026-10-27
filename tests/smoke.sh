@@ -12,6 +12,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# GNU stat (Linux) and BSD stat (macOS) spell the mode format differently.
+file_mode() {
+  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
+}
+
+git_commit() {
+  git -c user.name=repo-guard-test -c user.email=test@example.invalid commit -q "$@"
+}
+
 "$script" --help >/dev/null
 "$script" --dry-run --langs python,typescript "$target_repo" >/dev/null
 container_repo="$tmp_root/container-repo"
@@ -120,6 +129,16 @@ test -f "$git_target_repo/.git/hooks/pre-commit"
   git init -q
   printf 'safe\n' >safe.txt
   pre-commit run risky-filenames --files safe.txt >/dev/null
+  mkdir -p deploy infra/.ssh k8s services/api
+  for f in deploy/id_rsa infra/.ssh/id_ed25519 k8s/secrets.yaml services/api/.env; do
+    : >"$f"
+    if pre-commit run risky-filenames --files "$f" >/dev/null; then
+      echo "risky-filenames allowed nested secret path: $f" >&2
+      exit 1
+    fi
+  done
+  : >services/api/.env.example
+  pre-commit run risky-filenames --files services/api/.env.example >/dev/null
   # eslint must skip (exit 0) when the repo has no ESLint config
   printf 'export const x = 1;\n' >skip-lint.ts
   pre-commit run eslint --files skip-lint.ts >/dev/null
@@ -169,14 +188,14 @@ else
 fi
 
 # Permissions: secret-bearing files get 600; non-secret files get 644.
-test "$(stat -f '%Lp' "$target_repo/AGENTS.md")" = '600'
-test "$(stat -f '%Lp' "$target_repo/renovate.json")" = '600'
-test "$(stat -f '%Lp' "$target_repo/.gitignore")" = '644'
-test "$(stat -f '%Lp' "$target_repo/.gitleaks.toml")" = '644'
-test "$(stat -f '%Lp' "$target_repo/.ignore")" = '644'
-test "$(stat -f '%Lp' "$target_repo/.rgignore")" = '644'
-test "$(stat -f '%Lp' "$target_repo/.pre-commit-config.yaml")" = '644'
-test "$(stat -f '%Lp' "$target_repo/LOCAL_TOOLING.md")" = '644'
+test "$(file_mode "$target_repo/AGENTS.md")" = '600'
+test "$(file_mode "$target_repo/renovate.json")" = '600'
+test "$(file_mode "$target_repo/.gitignore")" = '644'
+test "$(file_mode "$target_repo/.gitleaks.toml")" = '644'
+test "$(file_mode "$target_repo/.ignore")" = '644'
+test "$(file_mode "$target_repo/.rgignore")" = '644'
+test "$(file_mode "$target_repo/.pre-commit-config.yaml")" = '644'
+test "$(file_mode "$target_repo/LOCAL_TOOLING.md")" = '644'
 
 # Upgrade preserves managed markers, drops legacy block even with changed hook entry.
 upgrade_legacy_repo="$tmp_root/upgrade-legacy-repo"
@@ -206,14 +225,22 @@ fi
 echo "smoke test passed"
 
 # Custom gitleaks rules catch the low-entropy config secrets the default rules miss.
+if ! command -v gitleaks >/dev/null 2>&1 && [ -n "${CI:-}" ]; then
+  echo "gitleaks is required in CI; the secret-detection tests would be skipped" >&2
+  exit 1
+fi
 if command -v gitleaks >/dev/null 2>&1; then
   leak_dir="$tmp_root/leak"
   mkdir -p "$leak_dir"
   cp "$target_repo/.gitleaks.toml" "$leak_dir/"
+  # Fixtures, not secrets: gitleaks:allow keeps this repo's own scan clean.
   # shellcheck disable=SC2016 # literal ${...} is the test input
-  for line in 'POSTGRES_PASSWORD: hunter22' \
-    'GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-hunter22}"' \
-    'DATABASE_URL: "postgresql://app:hunter22@db:5432/app"'; do
+  leak_lines=(
+    'POSTGRES_PASSWORD: hunter22'                                       # gitleaks:allow
+    'GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-hunter22}"' # gitleaks:allow
+    'DATABASE_URL: "postgresql://app:hunter22@db:5432/app"'             # gitleaks:allow
+  )
+  for line in "${leak_lines[@]}"; do
     printf 'services:\n  db:\n    environment:\n      %s\n' "$line" >"$leak_dir/compose.yml"
     if gitleaks dir --no-banner -c "$leak_dir/.gitleaks.toml" "$leak_dir" >/dev/null 2>&1; then
       echo "gitleaks missed: $line" >&2
@@ -225,4 +252,56 @@ if command -v gitleaks >/dev/null 2>&1; then
     'POSTGRES_PASSWORD: "${DB_PASSWORD:?set in .env}"' \
     'DATABASE_URL: "postgresql://app:${DB_PASSWORD}@db:5432/app"' >"$leak_dir/compose.yml"
   gitleaks dir --no-banner -c "$leak_dir/.gitleaks.toml" "$leak_dir" >/dev/null 2>&1
+fi
+
+# Stale managed blocks and files are reported, and --upgrade refreshes them.
+stale_repo="$tmp_root/stale-repo"
+"$script" --no-install "$stale_repo" >/dev/null
+sed -i.orig 's/name: merge conflict markers/name: edited by hand/' "$stale_repo/.pre-commit-config.yaml"
+printf '# local edit\n' >>"$stale_repo/.gitleaks.toml"
+"$script" --no-install "$stale_repo" 2>"$tmp_root/stale.err" >/dev/null
+grep -Eq "repo-guard:base:start in .*/stale-repo/.pre-commit-config.yaml is outdated" "$tmp_root/stale.err"
+grep -Eq "/stale-repo/.gitleaks.toml is outdated" "$tmp_root/stale.err"
+"$script" --no-install --upgrade "$stale_repo" 2>"$tmp_root/stale.err" >/dev/null
+if grep -Fq "outdated" "$tmp_root/stale.err"; then
+  echo "--upgrade left managed content outdated" >&2
+  exit 1
+fi
+cmp -s "$repo_root/templates/repo-guard/.gitleaks.toml" "$stale_repo/.gitleaks.toml"
+grep -Fv "# repo-guard:managed" "$stale_repo/.gitleaks.toml" >"$tmp_root/unmanaged.toml"
+printf '# kept\n' >>"$tmp_root/unmanaged.toml"
+cp "$tmp_root/unmanaged.toml" "$stale_repo/.gitleaks.toml"
+"$script" --no-install --upgrade "$stale_repo" >/dev/null
+grep -Fqx "# kept" "$stale_repo/.gitleaks.toml"
+
+# GitHub remotes get the server-side workflow; other remotes do not.
+gh_repo="$tmp_root/gh-repo"
+other_repo="$tmp_root/other-repo"
+for r in "$gh_repo" "$other_repo"; do
+  mkdir -p "$r"
+  git -C "$r" init -q
+done
+git -C "$gh_repo" remote add origin git@github.com:example/repo.git
+git -C "$other_repo" remote add origin https://gitlab.example.invalid/example/repo.git
+"$script" --no-install "$gh_repo" >/dev/null
+"$script" --no-install "$other_repo" >/dev/null
+grep -Fq "ghcr.io/gitleaks/gitleaks:" "$gh_repo/.github/workflows/repo-guard.yml"
+test ! -e "$other_repo/.github/workflows/repo-guard.yml"
+
+# Secrets already in history fail the bootstrap instead of passing silently.
+if command -v gitleaks >/dev/null 2>&1; then
+  leaky_repo="$tmp_root/leaky-repo"
+  mkdir -p "$leaky_repo"
+  (
+    cd "$leaky_repo"
+    git init -q
+    printf 'services:\n  db:\n    environment:\n      POSTGRES_PASSWORD: hunter22\n' >compose.yml # gitleaks:allow
+    git add compose.yml
+    git_commit -m "leak"
+  )
+  if "$script" --no-install "$leaky_repo" >/dev/null 2>"$tmp_root/leaky.err"; then
+    echo "bootstrap passed a repo with a secret in its history" >&2
+    exit 1
+  fi
+  grep -Fq "secret(s) in existing git history" "$tmp_root/leaky.err"
 fi
