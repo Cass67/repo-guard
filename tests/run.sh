@@ -40,7 +40,17 @@ if command -v rg >/dev/null 2>&1; then
   ln -s "$(command -v rg)" "$partial_scan_dir/rg"
 fi
 missing_path_value="$missing_tool_dir:/usr/bin:/bin:/usr/sbin:/sbin"
-missing_rg_path_value="$missing_rg_dir:/usr/bin:/bin:/usr/sbin:/sbin"
+# Shadowing is not enough for rg: apt installs it in /usr/bin, so build the
+# system dirs from symlinks to everything except rg.
+no_rg_bin="$tmp_root/no-rg-bin"
+mkdir -p "$no_rg_bin"
+for d in /usr/bin /bin /usr/sbin /sbin; do
+  for t in "$d"/*; do
+    n=${t##*/}
+    [ "$n" = rg ] || [ -e "$no_rg_bin/$n" ] || ln -s "$t" "$no_rg_bin/$n"
+  done
+done
+missing_rg_path_value="$missing_rg_dir:$no_rg_bin"
 missing_python_path_value="$missing_python_dir:/usr/bin:/bin:/usr/sbin:/sbin"
 missing_podman_path_value="$missing_podman_dir:/usr/bin:/bin:/usr/sbin:/sbin"
 partial_scan_path_value="$partial_scan_dir:/usr/bin:/bin:/usr/sbin:/sbin"
