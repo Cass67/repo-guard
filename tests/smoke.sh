@@ -65,6 +65,7 @@ test -f "$target_repo/.rgignore"
 test -f "$target_repo/.gitignore"
 test -f "$target_repo/.pre-commit-config.yaml"
 test -f "$target_repo/renovate.json"
+test -f "$target_repo/.gitleaks.toml"
 test -f "$container_repo/.pre-commit-config.yaml"
 
 grep -Fqx "# Security Lockdown Rules" "$target_repo/AGENTS.md"
@@ -124,7 +125,7 @@ test -f "$git_target_repo/.git/hooks/pre-commit"
   pre-commit run eslint --files skip-lint.ts >/dev/null
 )
 
-if python3 - "$repo_root" <<'PY'; then
+if python3 - "$repo_root" <<'PY'
 from pathlib import Path
 import sys
 
@@ -139,13 +140,14 @@ if violations:
     print("\n".join(violations))
     raise SystemExit(1)
 PY
+then
   :
 else
   echo "pre-commit template contains lines longer than 100 characters" >&2
   exit 1
 fi
 
-if python3 - "$target_repo/.pre-commit-config.yaml" <<'PY'; then
+if python3 - "$target_repo/.pre-commit-config.yaml" <<'PY'
 from pathlib import Path
 import sys
 
@@ -159,6 +161,7 @@ if violations:
     print("\n".join(violations))
     raise SystemExit(1)
 PY
+then
   :
 else
   echo "generated .pre-commit-config.yaml contains lines longer than 100 characters" >&2
@@ -169,6 +172,7 @@ fi
 test "$(stat -f '%Lp' "$target_repo/AGENTS.md")" = '600'
 test "$(stat -f '%Lp' "$target_repo/renovate.json")" = '600'
 test "$(stat -f '%Lp' "$target_repo/.gitignore")" = '644'
+test "$(stat -f '%Lp' "$target_repo/.gitleaks.toml")" = '644'
 test "$(stat -f '%Lp' "$target_repo/.ignore")" = '644'
 test "$(stat -f '%Lp' "$target_repo/.rgignore")" = '644'
 test "$(stat -f '%Lp' "$target_repo/.pre-commit-config.yaml")" = '644'
@@ -200,3 +204,25 @@ if grep -Fq '# repo-guard:python:start' "$upgrade_legacy_repo/.pre-commit-config
 fi
 
 echo "smoke test passed"
+
+# Custom gitleaks rules catch the low-entropy config secrets the default rules miss.
+if command -v gitleaks >/dev/null 2>&1; then
+  leak_dir="$tmp_root/leak"
+  mkdir -p "$leak_dir"
+  cp "$target_repo/.gitleaks.toml" "$leak_dir/"
+  # shellcheck disable=SC2016 # literal ${...} is the test input
+  for line in 'POSTGRES_PASSWORD: hunter22' \
+    'GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-hunter22}"' \
+    'DATABASE_URL: "postgresql://app:hunter22@db:5432/app"'; do
+    printf 'services:\n  db:\n    environment:\n      %s\n' "$line" >"$leak_dir/compose.yml"
+    if gitleaks dir --no-banner -c "$leak_dir/.gitleaks.toml" "$leak_dir" >/dev/null 2>&1; then
+      echo "gitleaks missed: $line" >&2
+      exit 1
+    fi
+  done
+  # shellcheck disable=SC2016
+  printf 'services:\n  db:\n    environment:\n      %s\n      %s\n' \
+    'POSTGRES_PASSWORD: "${DB_PASSWORD:?set in .env}"' \
+    'DATABASE_URL: "postgresql://app:${DB_PASSWORD}@db:5432/app"' >"$leak_dir/compose.yml"
+  gitleaks dir --no-banner -c "$leak_dir/.gitleaks.toml" "$leak_dir" >/dev/null 2>&1
+fi

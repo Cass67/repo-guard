@@ -1249,6 +1249,7 @@ apply_file_permissions() {
     "$repo_root/.ignore" \
     "$repo_root/.rgignore" \
     "$repo_root/.gitignore" \
+    "$repo_root/.gitleaks.toml" \
     "$repo_root/.pre-commit-config.yaml"; do
     if [ ! -e "$file" ]; then
       continue
@@ -1907,6 +1908,13 @@ if [ ! -f "$repo_root/renovate.json" ]; then
     log_info "would create $repo_root/renovate.json"
   else
     cp "$template_dir/renovate.json" "$repo_root/renovate.json"
+  fi
+fi
+if [ ! -f "$repo_root/.gitleaks.toml" ]; then
+  if [ "$dry_run" -eq 1 ]; then
+    log_info "would create $repo_root/.gitleaks.toml"
+  else
+    cp "$template_dir/.gitleaks.toml" "$repo_root/.gitleaks.toml"
   fi
 fi
 ensure_precommit_file "$repo_root/.pre-commit-config.yaml"

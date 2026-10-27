@@ -343,7 +343,8 @@ Base hooks currently include:
 - merge conflict marker detection
 - trailing whitespace detection
 - private key marker detection
-- `gitleaks` over staged changes
+- `gitleaks` over staged changes, with a `.gitleaks.toml` that also flags low-entropy config
+  secrets (`PASSWORD: literal`, `${SECRET:-default}`, passwords in connection URLs)
 
 Language fragments currently add:
 
