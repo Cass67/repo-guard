@@ -15,7 +15,7 @@ entropy = 0
 [[rules]]
 id = "secret-env-default"
 description = "Secret given a literal default in ${VAR:-default}; require it from .env instead"
-regex = '''(?i)\$\{[a-z0-9_]*(password|passwd|secret|salt|token)[a-z0-9_]*:?-([^}\s]{4,})\}'''
+regex = '''(?i)\$\{[a-z0-9_]*(password|passwd|secret|salt|token)[a-z0-9_]*:?-([^}\s<$][^}\s]{3,})\}'''
 secretGroup = 2
 entropy = 0
 
