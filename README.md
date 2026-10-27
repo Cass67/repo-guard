@@ -75,6 +75,7 @@ Bootstrap mode behavior:
 - If you do not pass `--langs`, `--detect`, or `--upgrade`, `repo-guard` installs the base files and base hooks only.
 - `--detect` respects normal ignore boundaries because it uses `rg --files`.
 - `--upgrade` only refreshes `repo-guard` managed blocks that are already marked in `.pre-commit-config.yaml`.
+- `--upgrade` never deletes hooks: a managed block holding hook ids the template lacks is kept unchanged with a warning (exit `1`). Keep custom hooks in their own `- repo: local` block outside the `repo-guard` markers.
 - `--check-tools` exits `1` when a required tool is missing or below the minimum tested version; otherwise it exits `0`.
 - `--check-tools` also accepts a shorthand language CSV immediately after the flag, for example `bin/repo-guard --check-tools python,containers`.
 - Bootstrap exits `1` with a warning when the repo is not actually protected: `pre-commit` is missing or `pre-commit install` failed (for example with `core.hooksPath` set), `gitleaks` is missing, or the existing git history already contains secrets. Files are still written; the exit code says the guard is not live yet.

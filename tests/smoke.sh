@@ -305,3 +305,19 @@ if command -v gitleaks >/dev/null 2>&1; then
   fi
   grep -Fq "secret(s) in existing git history" "$tmp_root/leaky.err"
 fi
+
+# --upgrade never deletes hooks someone added inside a managed block.
+custom_repo="$tmp_root/custom-repo"
+"$script" --no-install --langs bash "$custom_repo" >/dev/null
+awk '{ print } $0 == "# repo-guard:bash:start" { getline; print; getline; print
+  print "      - id: my-custom-hook"
+  print "        name: my custom hook"
+  print "        entry: \"true\""
+  print "        language: system" }' "$custom_repo/.pre-commit-config.yaml" >"$tmp_root/custom.yaml"
+mv "$tmp_root/custom.yaml" "$custom_repo/.pre-commit-config.yaml"
+if "$script" --no-install --upgrade "$custom_repo" >/dev/null 2>"$tmp_root/custom.err"; then
+  echo "--upgrade passed while keeping a block with custom hooks" >&2
+  exit 1
+fi
+grep -Fq "id: my-custom-hook" "$custom_repo/.pre-commit-config.yaml"
+grep -Fq "hooks the template lacks (my-custom-hook)" "$tmp_root/custom.err"
