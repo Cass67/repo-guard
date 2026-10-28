@@ -689,7 +689,13 @@ detect_existing_precommit_langs() {
     return
   fi
 
-  for lang in python go bash rust c swift javascript typescript ansible containers; do
+  # Derived from the templates: a hand-kept list missed every newly added fragment.
+  local fragment
+  for fragment in "$precommit_dir"/*.yaml; do
+    lang=$(basename "$fragment" .yaml)
+    if [ "$lang" = base ]; then
+      continue
+    fi
     if grep -Fqx -- "# repo-guard:$lang:start" "$precommit_file"; then
       add_selected_lang "$lang"
     fi

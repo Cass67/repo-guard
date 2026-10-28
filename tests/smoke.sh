@@ -476,3 +476,12 @@ grep -Fq "secret_scanning_push_protection][status]=enabled" "$tmp_root/remote-ba
 grep -Fq "FAIL  Dependabot alerts are disabled" "$tmp_root/remote-bad.out"
 grep -Fq "FAIL  no .github/workflows/repo-guard.yml on main" "$tmp_root/remote-bad.out"
 grep -Fq "warn  repo-guard 'secrets' check is not required" "$tmp_root/remote-bad.out"
+
+# --upgrade finds every managed fragment, including the extra checks.
+extra_repo="$tmp_root/extra-upgrade-repo"
+"$script" --no-install --langs semgrep,osv,actions "$extra_repo" >/dev/null
+sed -i.orig 's/name: semgrep (SAST)/name: stale semgrep/' "$extra_repo/.pre-commit-config.yaml"
+"$script" --no-install --upgrade "$extra_repo" >/dev/null 2>&1
+if grep -Fq "name: stale semgrep" "$extra_repo/.pre-commit-config.yaml"; then
+  fail "--upgrade did not refresh the semgrep block"
+fi
