@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+set -Eeuo pipefail
+
+# CI logs are not always reachable, but annotations are: report the failing line.
+if [ -n "${GITHUB_ACTIONS:-}" ]; then
+  trap 'echo "::error file=tests/run.sh,line=$LINENO::failed: $BASH_COMMAND"' ERR
+fi
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 script="$repo_root/bin/repo-guard"
