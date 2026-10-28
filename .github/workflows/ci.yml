@@ -11,6 +11,8 @@ env:
   GITLEAKS_VERSION: 8.30.1
   SHFMT_VERSION: 3.14.1
   SHFMT_SHA256: 76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf
+  ACTIONLINT_VERSION: 1.7.7
+  OSV_SCANNER_VERSION: 2.5.1
 
 jobs:
   test:
@@ -22,14 +24,16 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
       - name: Install Python deps
-        run: python -m pip install --upgrade pip pre-commit ruff==0.15.2
+        run: python -m pip install --upgrade pip pre-commit ruff==0.15.2 zizmor==1.31.1 semgrep==1.176.0
 
       - name: Install CLI deps (Ubuntu)
         if: runner.os == 'Linux'
@@ -44,10 +48,19 @@ jobs:
           curl -sSfLO "$base/$tarball"
           curl -sSfL "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt" | grep " $tarball\$" | sha256sum -c -
           sudo tar -xzf "$tarball" -C /usr/local/bin gitleaks
+          base="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}"
+          tarball="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -sSfLO "$base/$tarball"
+          curl -sSfL "$base/actionlint_${ACTIONLINT_VERSION}_checksums.txt" | grep " $tarball\$" | sha256sum -c -
+          sudo tar -xzf "$tarball" -C /usr/local/bin actionlint
+          base="https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}"
+          curl -sSfLO "$base/osv-scanner_linux_amd64"
+          curl -sSfL "$base/osv-scanner_SHA256SUMS" | grep " osv-scanner_linux_amd64\$" | sha256sum -c -
+          sudo install -m 0755 osv-scanner_linux_amd64 /usr/local/bin/osv-scanner
 
       - name: Install CLI deps (macOS)
         if: runner.os == 'macOS'
-        run: brew install shellcheck ripgrep shfmt gitleaks
+        run: brew install shellcheck ripgrep shfmt gitleaks actionlint osv-scanner
 
       - name: Shellcheck
         run: shellcheck bin/repo-guard tests/*.sh

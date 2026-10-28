@@ -1,0 +1,15 @@
+# repo-guard:semgrep:start
+  - repo: local
+    hooks:
+      - id: semgrep
+        name: semgrep (SAST)
+        entry: >-
+          bash -lc 'cfg=p/default; for c in .semgrep.yml .semgrep.yaml; do if [
+          -e "$c" ]; then cfg=$c; break; fi; done; semgrep scan --config "$cfg"
+          --error --metrics off --quiet --disable-version-check "$@"' --
+        language: system
+        types_or: [
+          python, go, javascript, jsx, ts, tsx, shell, c, c++, rust, swift,
+          ruby, java, php, dockerfile, terraform,
+        ]
+# repo-guard:semgrep:end

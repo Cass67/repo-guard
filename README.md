@@ -98,6 +98,27 @@ bin/repo-guard --check-tools --langs containers
 bin/repo-guard --check-tools python,containers
 ```
 
+### Remote Settings Audit
+
+Usage:
+
+```sh
+bin/repo-guard remote [repo-path]
+```
+
+Local hooks cannot see server-side settings, so `remote` reads them through `gh` for the repo's GitHub `origin`. It is read-only: failures print the `gh` command that would fix them, and nothing is changed.
+
+| Check | Result when missing |
+| --- | --- |
+| Secret scanning | FAIL (note for private repos without GitHub Advanced Security) |
+| Secret scanning push protection, which blocks pushes containing known secrets | FAIL (same note) |
+| Dependabot alerts, for vulnerabilities disclosed after a lockfile was committed | FAIL |
+| `.github/workflows/repo-guard.yml` on the default branch | FAIL |
+| Latest `repo-guard` run on the default branch passed | FAIL |
+| `secrets` is a required status check on the default branch | warning: it only gates PR merges, and admins pushing directly bypass it |
+
+It exits `1` on any FAIL.
+
 ### Runtime Scan Mode
 
 Usage:
@@ -268,6 +289,12 @@ Supported language names:
 - `ansible`
 - `containers`
 
+Extra checks, selected the same way (`--langs actions,osv,semgrep`):
+
+- `actions`: `actionlint` and `zizmor --offline` on GitHub workflows and composite actions. Implied when `origin` is on GitHub.
+- `osv`: `osv-scanner` on staged lockfiles of any ecosystem. Implied by `javascript`/`typescript`, which have no other dependency audit. Newly disclosed vulnerabilities in unchanged lockfiles are a server-side job: `repo-guard remote` checks Dependabot alerts are on.
+- `semgrep`: `semgrep` SAST on staged code with the `p/default` ruleset, or a repo-local `.semgrep.yml`/`.semgrep.yaml`. Needs network for registry rules.
+
 Aliases:
 
 - `py` -> `python`
@@ -297,6 +324,11 @@ Language-specific tool additions:
 | `typescript` | `eslint`, `prettier`, `tsc` |
 | `ansible` | `yamllint`, `ansible-lint`, `djlint` |
 | `containers` | `trivy` |
+| `actions` | `actionlint`, `zizmor` |
+| `osv` | `osv-scanner` |
+| `semgrep` | `semgrep` |
+
+`repo-guard remote` needs `gh` (GitHub CLI), authenticated.
 
 `podman` is only needed for `bin/repo-guard run --deep` when a buildable container file exists.
 
@@ -318,6 +350,9 @@ Current heuristics:
 - TypeScript: `*.ts`, `*.tsx`, `*.mts`, `*.cts`, `tsconfig.json`
 - Ansible: `ansible.cfg`, `*.j2`, `*.jinja2`, and common paths such as `playbooks/**`, `roles/**`, `group_vars/**`, `host_vars/**`, `inventories/**`
 - Containers: `Dockerfile`, `Containerfile`, `docker-compose.yml`, `docker-compose.yaml`, `compose.yml`, `compose.yaml`
+- Actions: `.github/workflows/*.yml` or `*.yaml` (checked directly, since `rg --files` skips hidden directories)
+- OSV: `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`, `Cargo.lock`, `go.mod`, `uv.lock`, `poetry.lock`, `Pipfile.lock`, `composer.lock`, `Gemfile.lock`
+- Semgrep: any detected code language (python, go, bash, rust, c, swift, javascript, typescript)
 
 Detection uses `rg --files`, so normal ignore rules still apply.
 
@@ -345,6 +380,7 @@ Important file behavior:
 Base hooks currently include:
 
 - risky filename detection for likely secret-bearing files, matched by basename and at any directory depth (`deploy/id_rsa` and `infra/.ssh/*` are caught; `.env.example`, `.env.sample` and `.env.template` are allowed anywhere)
+- large files and model weights: `*.gguf`, `*.safetensors`, `*.ckpt`, `*.pt`, `*.pth`, `*.onnx`, disk images and `zst`/`7z`/`rar`/`tar` archives always, anything else above 5 MiB (`REPO_GUARD_MAX_FILE_KB` changes the limit); Git LFS files are skipped
 - merge conflict marker detection
 - trailing whitespace detection
 - private key marker detection

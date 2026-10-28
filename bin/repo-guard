@@ -37,12 +37,18 @@ show_help() {
 usage:
   repo-guard [--langs python,go,...] [--detect] [--yes|--prompt-install|--no-install] [--dry-run] [--check-tools] [--git-init] [--upgrade] [repo-path]
   repo-guard run [--json] [--deep] [repo-path]
+  repo-guard remote [repo-path]
 
 bootstrap a repo with secret-safe defaults and local pre-commit hooks,
 or run local dependency/container scans against a target repo
 
 supported languages:
   python, go, bash, rust, c, swift, javascript, typescript, ansible, containers
+
+extra checks (selected like languages):
+  actions   actionlint + zizmor on GitHub workflows (implied by a GitHub origin)
+  osv       osv-scanner on staged lockfiles (implied by javascript/typescript)
+  semgrep   semgrep SAST on staged code (detected with any code language)
 
 aliases:
   py, js, ts, sh, shell, cpp, cxx
@@ -61,6 +67,12 @@ bootstrap options:
 run options:
   --json             emit one normalized JSON result object to stdout
   --deep             include Podman image build + Trivy image scan
+
+remote:
+  read-only audit of the GitHub repo's settings via gh: secret scanning, push
+  protection, Dependabot alerts, the repo-guard workflow and its latest run on
+  the default branch, and whether that check is required. Prints fix commands;
+  changes nothing.
 
 automatic tool installation is supported on macOS and Linux
 EOF
@@ -540,7 +552,7 @@ add_selected_lang() {
   local lang=$1
 
   case "$lang" in
-    python | go | bash | rust | c | swift | javascript | typescript | ansible | containers)
+    python | go | bash | rust | c | swift | javascript | typescript | ansible | containers | actions | osv | semgrep)
       if ! contains_element "$lang" "${selected_langs[@]:-}"; then
         selected_langs+=("$lang")
       fi
@@ -635,6 +647,37 @@ detect_repo_langs() {
 
   if repo_has_globs "Dockerfile" "Containerfile" "docker-compose.yml" "docker-compose.yaml" "compose.yml" "compose.yaml"; then
     add_detected_lang containers
+  fi
+
+  # rg --files skips hidden directories, so look for workflows directly.
+  if compgen -G "$repo_root/.github/workflows/*.y*ml" >/dev/null; then
+    add_detected_lang actions
+  fi
+
+  if repo_has_globs "package-lock.json" "yarn.lock" "pnpm-lock.yaml" "bun.lock" "Cargo.lock" \
+    "go.mod" "uv.lock" "poetry.lock" "Pipfile.lock" "composer.lock" "Gemfile.lock"; then
+    add_detected_lang osv
+  fi
+
+  local lang
+  for lang in python go bash rust c swift javascript typescript; do
+    if contains_element "$lang" "${detected_langs[@]:-}"; then
+      add_detected_lang semgrep
+      break
+    fi
+  done
+}
+
+# Checks that follow from other choices: JS/TS has no other dependency audit, and
+# a GitHub origin gets the repo-guard workflow, which should itself be linted.
+add_implied_langs() {
+  if contains_element javascript "${selected_langs[@]:-}" ||
+    contains_element typescript "${selected_langs[@]:-}"; then
+    add_selected_lang osv
+  fi
+  if [ -e "$repo_root/.git" ] &&
+    git -C "$repo_root" remote -v 2>/dev/null | grep -q 'github\.com[:/]'; then
+    add_selected_lang actions
   fi
 }
 
@@ -750,6 +793,16 @@ collect_required_tools() {
       containers)
         add_required_tool trivy
         ;;
+      actions)
+        add_required_tool actionlint
+        add_required_tool zizmor
+        ;;
+      osv)
+        add_required_tool osv-scanner
+        ;;
+      semgrep)
+        add_required_tool semgrep
+        ;;
     esac
   done
 }
@@ -809,6 +862,11 @@ minimum_version_for_tool() {
     ansible-lint) printf '24.2.0\n' ;;
     djlint) printf '1.34.0\n' ;;
     trivy) printf '0.50.0\n' ;;
+    actionlint) printf '1.7.0\n' ;;
+    zizmor) printf '1.0.0\n' ;;
+    osv-scanner) printf '2.0.0\n' ;;
+    semgrep) printf '1.80.0\n' ;;
+    gh) printf '2.40.0\n' ;;
     *) printf '\n' ;;
   esac
 }
@@ -824,6 +882,13 @@ installed_version_for_tool() {
   case "$tool" in
     pre-commit | rg | gitleaks | ruff | go | golangci-lint | shfmt | cppcheck | swiftformat | swiftlint | eslint | prettier | tsc | yamllint | ansible-lint | djlint | pip-audit | trivy)
       raw=$("$tool" --version 2>&1 | head -n 1 || true)
+      ;;
+    actionlint | zizmor | osv-scanner | gh)
+      raw=$("$tool" --version 2>&1 | head -n 1 || true)
+      ;;
+    semgrep)
+      # An update notice can precede the version line.
+      raw=$(semgrep --version 2>/dev/null | tail -n 1 || true)
       ;;
     bandit | radon | vulture | cargo | cargo-audit)
       raw=$("$tool" --version 2>&1 | head -n 1 || true)
@@ -911,6 +976,14 @@ print_tool_versions() {
   done
 }
 
+install_go_cli() {
+  if ! command -v go >/dev/null 2>&1; then
+    log_warn "install $1 manually (or install Go first), then rerun this script."
+    return 1
+  fi
+  go install "$2"
+}
+
 install_python_cli() {
   local package=$1
 
@@ -980,6 +1053,9 @@ install_with_brew() {
   local tool=$1
   case "$tool" in
     pre-commit | rg | gitleaks | ruff | golangci-lint | shfmt | shellcheck | cppcheck | swiftformat | yamllint | trivy)
+      brew install "$tool"
+      ;;
+    actionlint | zizmor | osv-scanner | semgrep | gh)
       brew install "$tool"
       ;;
     swiftlint)
@@ -1085,6 +1161,19 @@ install_with_apt() {
       ;;
     bash)
       ;;
+    zizmor | semgrep)
+      install_python_cli "$tool"
+      ;;
+    actionlint)
+      install_go_cli actionlint github.com/rhysd/actionlint/cmd/actionlint@latest
+      ;;
+    osv-scanner)
+      install_go_cli osv-scanner github.com/google/osv-scanner/v2/cmd/osv-scanner@latest
+      ;;
+    gh)
+      sudo apt-get update
+      sudo apt-get install -y gh
+      ;;
     *)
       log_warn "no apt install rule for $tool"
       return 1
@@ -1147,6 +1236,18 @@ install_with_dnf() {
       ;;
     bash)
       ;;
+    zizmor | semgrep)
+      install_python_cli "$tool"
+      ;;
+    actionlint)
+      install_go_cli actionlint github.com/rhysd/actionlint/cmd/actionlint@latest
+      ;;
+    osv-scanner)
+      install_go_cli osv-scanner github.com/google/osv-scanner/v2/cmd/osv-scanner@latest
+      ;;
+    gh)
+      sudo dnf install -y gh
+      ;;
     *)
       log_warn "no dnf install rule for $tool"
       return 1
@@ -1207,6 +1308,18 @@ install_with_pacman() {
       install_node_cli typescript
       ;;
     bash)
+      ;;
+    zizmor | semgrep)
+      install_python_cli "$tool"
+      ;;
+    actionlint)
+      install_go_cli actionlint github.com/rhysd/actionlint/cmd/actionlint@latest
+      ;;
+    osv-scanner)
+      install_go_cli osv-scanner github.com/google/osv-scanner/v2/cmd/osv-scanner@latest
+      ;;
+    gh)
+      sudo pacman -S --noconfirm github-cli
       ;;
     *)
       log_warn "no pacman install rule for $tool"
@@ -1620,6 +1733,103 @@ run_container_deep() {
   trivy image --severity "$severity" --exit-code 1 "$image_name"
 }
 
+remote_ok() { log_info "ok    $1"; }
+remote_fail() {
+  log_warn "FAIL  $1"
+  log_warn "      fix: $2"
+  remote_failed=1
+}
+remote_note() { log_warn "warn  $1"; }
+
+# Read-only: local hooks cannot see server-side settings, so check them here.
+remote_command() {
+  local url slug branch visibility scanning push_protection conclusion required
+  remote_failed=0
+
+  if ! command -v gh >/dev/null 2>&1; then
+    log_warn "gh (GitHub CLI) is required for repo-guard remote"
+    return 1
+  fi
+  if ! url=$(git -C "$repo_root" remote get-url origin 2>/dev/null); then
+    log_warn "no origin remote in $repo_root"
+    return 1
+  fi
+  slug=$(printf '%s\n' "$url" |
+    sed -nE 's#^(git@github\.com:|ssh://git@github\.com/|https://github\.com/)([^/]+/[^/]+)$#\2#p')
+  slug=${slug%.git}
+  if [ -z "$slug" ]; then
+    log_warn "origin is not a GitHub repository: $url"
+    return 1
+  fi
+  if ! IFS=$'\t' read -r branch visibility scanning push_protection < <(gh api "repos/$slug" --jq \
+    '[.default_branch, .visibility,
+      (.security_and_analysis.secret_scanning.status // "unknown"),
+      (.security_and_analysis.secret_scanning_push_protection.status // "unknown")] | @tsv'); then
+    log_warn "cannot read repos/$slug (check gh auth status)"
+    return 1
+  fi
+  log_info "$slug ($visibility, default branch $branch)"
+
+  local key label setting
+  for key in secret_scanning secret_scanning_push_protection; do
+    if [ "$key" = secret_scanning ]; then
+      setting=$scanning
+      label="secret scanning"
+    else
+      setting=$push_protection
+      label="secret scanning push protection (blocks pushes containing known secrets)"
+    fi
+    if [ "$setting" = enabled ]; then
+      remote_ok "$label"
+    elif [ "$setting" = unknown ] && [ "$visibility" != public ]; then
+      remote_note "$label: not visible (private repos need GitHub Advanced Security, or admin access)"
+    else
+      remote_fail "$label is $setting" \
+        "gh api -X PATCH repos/$slug -f 'security_and_analysis[$key][status]=enabled'"
+    fi
+  done
+
+  if gh api "repos/$slug/vulnerability-alerts" --silent >/dev/null 2>&1; then
+    remote_ok "Dependabot alerts (catches vulnerabilities disclosed after a lockfile was committed)"
+  else
+    remote_fail "Dependabot alerts are disabled" "gh api -X PUT repos/$slug/vulnerability-alerts"
+  fi
+
+  if gh api "repos/$slug/contents/.github/workflows/repo-guard.yml?ref=$branch" --silent >/dev/null 2>&1; then
+    remote_ok "repo-guard workflow on $branch"
+    conclusion=$(gh api "repos/$slug/actions/workflows/repo-guard.yml/runs?branch=$branch&per_page=1" \
+      --jq '.workflow_runs[0].conclusion // "none"' 2>/dev/null || printf 'unknown')
+    if [ "$conclusion" = success ]; then
+      remote_ok "latest repo-guard run on $branch passed"
+    else
+      remote_fail "latest repo-guard run on $branch: $conclusion" \
+        "gh run list --workflow repo-guard.yml --branch $branch --repo $slug"
+    fi
+  else
+    remote_fail "no .github/workflows/repo-guard.yml on $branch" \
+      "rerun repo-guard in $repo_root and push the workflow it writes"
+  fi
+
+  required=$(gh api "repos/$slug/rules/branches/$branch" --jq \
+    '[.[] | select(.type == "required_status_checks")
+      | .parameters.required_status_checks[].context] | index("secrets") != null' 2>/dev/null || true)
+  if [ "$required" != true ]; then
+    required=$(gh api "repos/$slug/branches/$branch/protection/required_status_checks" --jq \
+      '([.contexts[]?] + [.checks[]?.context]) | index("secrets") != null' 2>/dev/null || true)
+  fi
+  if [ "$required" = true ]; then
+    remote_ok "repo-guard 'secrets' check is required on $branch"
+  else
+    remote_note "repo-guard 'secrets' check is not required on $branch: it only gates PR merges, and admins pushing directly bypass it"
+  fi
+
+  if [ "$remote_failed" -ne 0 ]; then
+    log_warn "remote settings leave $slug exposed; the fix commands above change repo settings"
+    return 1
+  fi
+  return 0
+}
+
 run_command() {
   local target=$repo_root
   local lang
@@ -1863,8 +2073,8 @@ PY
   return "$status"
 }
 
-if [ $# -gt 0 ] && [ "$1" = "run" ]; then
-  command_name="run"
+if [ $# -gt 0 ] && { [ "$1" = "run" ] || [ "$1" = "remote" ]; }; then
+  command_name=$1
   shift
 fi
 
@@ -1955,6 +2165,12 @@ if [ "$command_name" = "run" ]; then
   exit $?
 fi
 
+if [ "$command_name" = "remote" ]; then
+  resolve_repo_root
+  remote_command
+  exit $?
+fi
+
 resolve_repo_root
 
 if [ -n "$langs_csv" ]; then
@@ -1977,6 +2193,8 @@ fi
 if [ "$upgrade_mode" -eq 1 ]; then
   detect_existing_precommit_langs
 fi
+
+add_implied_langs
 
 collect_required_tools
 collect_missing_tools

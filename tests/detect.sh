@@ -45,4 +45,14 @@ printf 'FROM python:3.12-slim\n' >"$tmp_container/Dockerfile"
 grep -Fq "detected repo languages: containers" /tmp/repo-guard-detect-container.out
 grep -Fqx "# repo-guard:containers:start" "$tmp_container/.pre-commit-config.yaml"
 
+tmp_extra="$tmp_root/extra-checks-repo"
+mkdir -p "$tmp_extra/.github/workflows"
+printf 'on: push\n' >"$tmp_extra/.github/workflows/ci.yml"
+printf '{}\n' >"$tmp_extra/package-lock.json"
+printf 'print(1)\n' >"$tmp_extra/app.py"
+"$script" --detect --no-install "$tmp_extra" >"$tmp_root/detect-extra.out"
+for marker in actions osv semgrep; do
+  grep -Fqx "# repo-guard:$marker:start" "$tmp_extra/.pre-commit-config.yaml"
+done
+
 echo "detect test passed"

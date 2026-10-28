@@ -1,0 +1,14 @@
+# repo-guard:actions:start
+  - repo: local
+    hooks:
+      - id: actionlint
+        name: actionlint
+        entry: actionlint
+        language: system
+        files: ^\.github/workflows/[^/]+\.ya?ml$
+      - id: zizmor
+        name: zizmor (workflow security)
+        entry: zizmor --offline --no-progress
+        language: system
+        files: ^\.github/(workflows/[^/]+|actions/.+/action)\.ya?ml$
+# repo-guard:actions:end

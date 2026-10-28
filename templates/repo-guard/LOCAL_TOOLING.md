@@ -60,6 +60,19 @@ from the official GitHub release package instead.
 - `trivy`
 - optional: `podman` for `repo-guard run --deep`
 
+## GitHub Actions
+- `actionlint`
+- `zizmor`
+
+## Dependency Vulnerabilities (OSV)
+- `osv-scanner`
+
+## SAST
+- `semgrep`
+
+## Remote Settings Audit
+- `gh` (GitHub CLI), for `repo-guard remote`
+
 ## Minimum Tested Versions
 - Base: `pre-commit >= 3.6.0`, `rg >= 13.0.0`, `gitleaks >= 8.19.0`
 - Python: `ruff >= 0.5.0`, `bandit >= 1.7.8`, `radon >= 6.0.1`, `vulture >= 2.11`, `pip-audit >= 2.7.0`
@@ -71,3 +84,7 @@ from the official GitHub release package instead.
 - Ansible: `yamllint >= 1.35.0`, `ansible-lint >= 24.2.0`, `djlint >= 1.34.0`
 - JavaScript / TypeScript: `eslint >= 9.0.0`, `prettier >= 3.0.0`, `tsc >= 5.4.0`
 - Containers / Supply Chain: `trivy >= 0.50.0`
+- GitHub Actions: `actionlint >= 1.7.0`, `zizmor >= 1.0.0`
+- OSV: `osv-scanner >= 2.0.0`
+- SAST: `semgrep >= 1.80.0`
+- Remote: `gh >= 2.40.0`

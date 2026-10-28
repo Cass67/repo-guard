@@ -1,0 +1,17 @@
+# repo-guard:osv:start
+  - repo: local
+    hooks:
+      - id: osv-scanner
+        name: osv-scanner (dependency vulnerabilities)
+        entry: >-
+          bash -lc 'args=(); for f in "$@"; do args+=(-L "$f"); done;
+          osv-scanner scan source "${args[@]}"' --
+        language: system
+        files: |
+          (?x)(^|/)(
+            package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|
+            bun\.lock|deno\.lock|composer\.lock|Gemfile\.lock|go\.mod|Cargo\.lock|
+            uv\.lock|poetry\.lock|Pipfile\.lock|pdm\.lock|requirements[^/]*\.txt|
+            gradle\.lockfile|mix\.lock|pubspec\.lock|packages\.lock\.json
+          )$
+# repo-guard:osv:end

@@ -50,6 +50,34 @@
             exit "$status"
           ' --
         language: system
+      - id: large-files
+        name: large files and model weights
+        entry: |-
+          bash -lc '
+            # One bad git add of weights or a backup bloats history for good.
+            max_kb=${REPO_GUARD_MAX_FILE_KB:-5120}
+            status=0
+            for f in "$@"; do
+              # LFS files are pointers in git but full size on disk.
+              case "$(git check-attr filter -- "$f")" in
+                *": filter: lfs") continue ;;
+              esac
+              case "${f##*/}" in
+                *.gguf|*.safetensors|*.ckpt|*.pt|*.pth|*.onnx|*.ggml) ;;
+                *.qcow2|*.vmdk|*.vdi|*.iso|*.zst|*.7z|*.rar|*.tar) ;;
+                *)
+                  if [ ! -f "$f" ]; then continue; fi
+                  kb=$(( ($(wc -c <"$f") + 1023) / 1024 ))
+                  if [ "$kb" -le "$max_kb" ]; then continue; fi
+                  ;;
+              esac
+              printf "refusing large or binary-artifact file=%s " "$f"
+              printf "(limit %s KiB via REPO_GUARD_MAX_FILE_KB; use Git LFS)\n" "$max_kb"
+              status=1
+            done
+            exit "$status"
+          ' --
+        language: system
       - id: merge-conflict
         name: merge conflict markers
         entry: >-

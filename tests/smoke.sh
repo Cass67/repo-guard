@@ -321,3 +321,153 @@ if "$script" --no-install --upgrade "$custom_repo" >/dev/null 2>"$tmp_root/custo
 fi
 grep -Fq "id: my-custom-hook" "$custom_repo/.pre-commit-config.yaml"
 grep -Fq "hooks the template lacks (my-custom-hook)" "$tmp_root/custom.err"
+
+# Optional tools are skipped locally when missing but mandatory under CI.
+have_tool() {
+  if command -v "$1" >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ -n "${CI:-}" ]; then
+    echo "$1 is required in CI; its tests would be skipped" >&2
+    exit 1
+  fi
+  return 1
+}
+
+# Large files and model weights are refused; Git LFS files are not.
+lf_repo="$tmp_root/large-files-repo"
+"$script" --no-install "$lf_repo" >/dev/null
+(
+  cd "$lf_repo"
+  git init -q
+  printf 'small\n' >small.txt
+  head -c 6000000 /dev/zero >big.bin
+  : >model.gguf
+  head -c 6000000 /dev/zero >tracked-by-lfs.bin
+  printf 'tracked-by-lfs.bin filter=lfs diff=lfs merge=lfs -text\n' >.gitattributes
+  pre-commit run large-files --files small.txt tracked-by-lfs.bin >/dev/null
+  for f in big.bin model.gguf; do
+    if pre-commit run large-files --files "$f" >/dev/null; then
+      echo "large-files allowed $f" >&2
+      exit 1
+    fi
+  done
+  REPO_GUARD_MAX_FILE_KB=10000 pre-commit run large-files --files big.bin >/dev/null
+)
+
+# A GitHub origin implies the actions checks; JS/TS implies osv.
+grep -Fqx "# repo-guard:actions:start" "$gh_repo/.pre-commit-config.yaml"
+if grep -Fqx "# repo-guard:actions:start" "$other_repo/.pre-commit-config.yaml"; then
+  echo "actions checks added without a GitHub origin" >&2
+  exit 1
+fi
+js_repo="$tmp_root/js-repo"
+"$script" --no-install --langs javascript "$js_repo" >/dev/null
+grep -Fqx "# repo-guard:osv:start" "$js_repo/.pre-commit-config.yaml"
+
+# The workflows repo-guard ships and runs must pass its own actions checks.
+if have_tool actionlint && have_tool zizmor; then
+  for wf in "$repo_root/templates/repo-guard/github-workflow.yml" "$repo_root"/.github/workflows/*.yml; do
+    actionlint "$wf"
+    zizmor --offline --no-progress "$wf" >/dev/null
+  done
+  bad_wf_repo="$tmp_root/bad-workflow-repo"
+  "$script" --no-install --langs actions "$bad_wf_repo" >/dev/null
+  (
+    cd "$bad_wf_repo"
+    git init -q
+    mkdir -p .github/workflows
+    # shellcheck disable=SC2016 # the unexpanded expression is the injection under test
+    printf '%s\n' 'on: pull_request_target' 'permissions: {}' 'jobs:' '  t:' \
+      '    runs-on: ubuntu-latest' '    steps:' \
+      '      - run: echo "${{ github.event.pull_request.title }}"' >.github/workflows/bad.yml
+    if pre-commit run zizmor --files .github/workflows/bad.yml >/dev/null; then
+      echo "zizmor passed a template-injection workflow" >&2
+      exit 1
+    fi
+  )
+fi
+
+if have_tool semgrep; then
+  sast_repo="$tmp_root/sast-repo"
+  "$script" --no-install --langs semgrep "$sast_repo" >/dev/null
+  (
+    cd "$sast_repo"
+    git init -q
+    printf 'import subprocess, sys\nsubprocess.call(sys.argv[1], shell=True)\n' >bad.py
+    printf 'print("ok")\n' >ok.py
+    pre-commit run semgrep --files ok.py >/dev/null
+    if pre-commit run semgrep --files bad.py >/dev/null; then
+      echo "semgrep passed shell=True with user input" >&2
+      exit 1
+    fi
+  )
+fi
+
+# osv.dev is unreachable from some networks, so this only runs in CI.
+if [ -n "${CI:-}" ] && have_tool osv-scanner; then
+  osv_repo="$tmp_root/osv-repo"
+  "$script" --no-install --langs osv "$osv_repo" >/dev/null
+  (
+    cd "$osv_repo"
+    git init -q
+    printf '%s\n' '{"name":"t","version":"1.0.0","lockfileVersion":3,"requires":true,' \
+      '"packages":{"":{"name":"t","version":"1.0.0","dependencies":{"lodash":"4.17.15"}},' \
+      '"node_modules/lodash":{"version":"4.17.15"}}}' >package-lock.json
+    if pre-commit run osv-scanner --files package-lock.json >/dev/null; then
+      echo "osv-scanner passed lodash 4.17.15" >&2
+      exit 1
+    fi
+  )
+fi
+
+# repo-guard remote: a stub gh answers from one file per API path.
+gh_stub="$tmp_root/gh-stub"
+mkdir -p "$gh_stub/bin"
+cat >"$gh_stub/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+path=$2
+case "$path" in
+  repos/example/repo) key=repo ;;
+  */vulnerability-alerts) key=alerts ;;
+  */contents/.github/workflows/repo-guard.yml*) key=workflow ;;
+  */actions/workflows/repo-guard.yml/runs*) key=runs ;;
+  */rules/branches/*) key=rules ;;
+  *) key=none ;;
+esac
+f="$GH_STUB_DIR/$key"
+if [ ! -f "$f" ]; then
+  echo "gh: Not Found (HTTP 404)" >&2
+  exit 1
+fi
+cat "$f"
+STUB
+chmod +x "$gh_stub/bin/gh"
+remote_repo="$tmp_root/remote-repo"
+mkdir -p "$remote_repo"
+git -C "$remote_repo" init -q
+git -C "$remote_repo" remote add origin git@github.com:example/repo.git
+good="$gh_stub/good"
+mkdir -p "$good"
+printf 'main\tpublic\tenabled\tenabled\n' >"$good/repo"
+: >"$good/alerts"
+: >"$good/workflow"
+printf 'success\n' >"$good/runs"
+printf 'true\n' >"$good/rules"
+PATH="$gh_stub/bin:$PATH" GH_STUB_DIR="$good" "$script" remote "$remote_repo" >"$tmp_root/remote-good.out" 2>&1
+if grep -Eq "FAIL|warn" "$tmp_root/remote-good.out"; then
+  echo "remote flagged a fully configured repo" >&2
+  exit 1
+fi
+bad="$gh_stub/bad"
+mkdir -p "$bad"
+printf 'main\tpublic\tenabled\tdisabled\n' >"$bad/repo"
+if PATH="$gh_stub/bin:$PATH" GH_STUB_DIR="$bad" "$script" remote "$remote_repo" >"$tmp_root/remote-bad.out" 2>&1; then
+  echo "remote passed a repo without push protection, alerts or workflow" >&2
+  exit 1
+fi
+grep -Fq "FAIL  secret scanning push protection" "$tmp_root/remote-bad.out"
+grep -Fq "secret_scanning_push_protection][status]=enabled" "$tmp_root/remote-bad.out"
+grep -Fq "FAIL  Dependabot alerts are disabled" "$tmp_root/remote-bad.out"
+grep -Fq "FAIL  no .github/workflows/repo-guard.yml on main" "$tmp_root/remote-bad.out"
+grep -Fq "warn  repo-guard 'secrets' check is not required" "$tmp_root/remote-bad.out"
