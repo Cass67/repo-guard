@@ -410,7 +410,10 @@ if [ -n "${CI:-}" ] && have_tool osv-scanner; then
     git init -q
     printf '%s\n' '{"name":"t","version":"1.0.0","lockfileVersion":3,"requires":true,' \
       '"packages":{"":{"name":"t","version":"1.0.0","dependencies":{"lodash":"4.17.15"}},' \
-      '"node_modules/lodash":{"version":"4.17.15"}}}' >package-lock.json
+      '"node_modules/lodash":{"version":"4.17.15",' \
+      '"resolved":"https://registry.npmjs.org/lodash/-/lodash-4.17.15.tgz",' \
+      '"integrity":"sha512-8xOcRHvCjnocdS5cpwXQXVzmmh5e5+saE2QGoeQmbKmRS6J3VQppPOIt0MnmE+4xlZoumy0GPG0D0MVIQbNA1A=="}}}' \
+      >package-lock.json
     if pre-commit run osv-scanner --files package-lock.json >/dev/null; then
       fail "osv-scanner passed lodash 4.17.15"
     fi

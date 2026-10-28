@@ -60,7 +60,18 @@ jobs:
 
       - name: Install CLI deps (macOS)
         if: runner.os == 'macOS'
-        run: brew install shellcheck ripgrep shfmt gitleaks actionlint osv-scanner
+        run: |
+          brew install shellcheck ripgrep shfmt gitleaks
+          # Same pinned, checksum-verified releases as Linux, so both test one version.
+          base="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}"
+          tarball="actionlint_${ACTIONLINT_VERSION}_darwin_arm64.tar.gz"
+          curl -sSfLO "$base/$tarball"
+          curl -sSfL "$base/actionlint_${ACTIONLINT_VERSION}_checksums.txt" | grep " $tarball\$" | shasum -a 256 -c -
+          sudo tar -xzf "$tarball" -C /usr/local/bin actionlint
+          base="https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}"
+          curl -sSfLO "$base/osv-scanner_darwin_arm64"
+          curl -sSfL "$base/osv-scanner_SHA256SUMS" | grep " osv-scanner_darwin_arm64\$" | shasum -a 256 -c -
+          sudo install -m 0755 osv-scanner_darwin_arm64 /usr/local/bin/osv-scanner
 
       - name: Shellcheck
         run: shellcheck bin/repo-guard tests/*.sh
