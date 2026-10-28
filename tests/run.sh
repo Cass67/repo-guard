@@ -7,6 +7,14 @@ if [ -n "${GITHUB_ACTIONS:-}" ]; then
   trap 'echo "::error file=tests/run.sh,line=$LINENO::failed: $BASH_COMMAND"' ERR
 fi
 
+fail() {
+  echo "$*" >&2
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    echo "::error file=tests/run.sh::$*"
+  fi
+  exit 1
+}
+
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 script="$repo_root/bin/repo-guard"
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/repo-guard-run.XXXXXX")"
@@ -288,8 +296,7 @@ env PATH="$path_value" RUN_LOG="$run_log" \
   "$script" run "$python_repo" >/dev/null
 grep -Fq 'pip-audit -r requirements.txt' "$run_log"
 if grep -Fq 'podman ' "$run_log"; then
-  echo "python-only run unexpectedly invoked podman" >&2
-  exit 1
+  fail "python-only run unexpectedly invoked podman"
 fi
 
 : >"$run_log"
@@ -302,8 +309,7 @@ grep -Fq "trivy config --severity HIGH,CRITICAL --exit-code 1 $container_repo" "
 if env PATH="$path_value" RUN_LOG="$run_log" \
   TRIVY_FS_EXIT_CODE=1 TRIVY_CONFIG_EXIT_CODE=0 \
   "$script" run "$container_repo" >/dev/null; then
-  echo "container run unexpectedly exited 0 when trivy fs failed" >&2
-  exit 1
+  fail "container run unexpectedly exited 0 when trivy fs failed"
 fi
 
 : >"$run_log"
@@ -332,16 +338,14 @@ grep -Fq 'trivy image --severity CRITICAL --exit-code 1 local/custom:dev' "$run_
 )
 grep -Fq 'pip-audit -r requirements.txt' "$run_log"
 if grep -Fq 'trivy fs --severity HIGH,CRITICAL --exit-code 1' "$run_log"; then
-  echo "positional repo path run unexpectedly scanned the current working directory" >&2
-  exit 1
+  fail "positional repo path run unexpectedly scanned the current working directory"
 fi
 
 : >"$run_log"
 env PATH="$path_value" RUN_LOG="$run_log" \
   "$script" run "$empty_repo" >/dev/null
 if [ -s "$run_log" ]; then
-  echo "empty repo run unexpectedly invoked scanner tools" >&2
-  exit 1
+  fail "empty repo run unexpectedly invoked scanner tools"
 fi
 
 help_output="$("$script" --help)"
@@ -354,8 +358,7 @@ if env PATH="$path_value" RUN_MODE=json \
   TRIVY_CONFIG_JSON="$tmp_root/trivy-empty.json" \
   TRIVY_IMAGE_JSON="$tmp_root/trivy-empty.json" \
   "$script" run --json "$python_repo" >"$tmp_root/run.json"; then
-  echo "run --json unexpectedly exited 0 when unsuppressed findings were present" >&2
-  exit 1
+  fail "run --json unexpectedly exited 0 when unsuppressed findings were present"
 fi
 
 python3 - "$tmp_root/run.json" "$python_repo" <<'PY'
@@ -405,8 +408,7 @@ if env PATH="$path_value" RUN_MODE=json \
   TRIVY_CONFIG_JSON="$tmp_root/trivy-empty.json" \
   TRIVY_IMAGE_JSON="$tmp_root/trivy-empty.json" \
   "$script" run --json "$python_repo" >"$tmp_root/run-failed-check.json"; then
-  echo "run --json unexpectedly exited 0 when scanner exited non-zero" >&2
-  exit 1
+  fail "run --json unexpectedly exited 0 when scanner exited non-zero"
 fi
 
 python3 - "$tmp_root/run-failed-check.json" <<'PY'
@@ -426,8 +428,7 @@ if env PATH="$path_value" RUN_MODE=json \
   TRIVY_CONFIG_JSON="$tmp_root/trivy-empty.json" \
   TRIVY_IMAGE_JSON="$tmp_root/trivy-empty.json" \
   "$script" run --json "$python_repo" >"$tmp_root/run-silent-failed-check.json"; then
-  echo "run --json unexpectedly exited 0 when scanner failed silently" >&2
-  exit 1
+  fail "run --json unexpectedly exited 0 when scanner failed silently"
 fi
 
 python3 - "$tmp_root/run-silent-failed-check.json" <<'PY'
@@ -451,8 +452,7 @@ if env PATH="$path_value" RUN_MODE=json \
   TRIVY_CONFIG_JSON="$tmp_root/trivy-empty.json" \
   TRIVY_IMAGE_JSON="$tmp_root/trivy-empty.json" \
   "$script" run --json --deep "$container_repo" >"$tmp_root/run-build-failed.json"; then
-  echo "run --json --deep unexpectedly exited 0 when podman build failed" >&2
-  exit 1
+  fail "run --json --deep unexpectedly exited 0 when podman build failed"
 fi
 
 python3 - "$tmp_root/run-build-failed.json" <<'PY'
@@ -470,8 +470,7 @@ if env PATH="$path_value" RUN_MODE=json \
   TRIVY_FS_EXIT_CODE=1 \
   TRIVY_CONFIG_JSON="$tmp_root/trivy-empty.json" \
   "$script" run --json "$container_repo" >"$tmp_root/run-trivy-silent-failed-check.json"; then
-  echo "run --json unexpectedly exited 0 when trivy fs failed silently" >&2
-  exit 1
+  fail "run --json unexpectedly exited 0 when trivy fs failed silently"
 fi
 
 python3 - "$tmp_root/run-trivy-silent-failed-check.json" <<'PY'
@@ -565,8 +564,7 @@ PY
 
 if env PATH="$missing_path_value" \
   "$script" run --json "$python_repo" >"$tmp_root/run-missing-tools.json"; then
-  echo "run --json unexpectedly exited 0 when pip-audit was missing" >&2
-  exit 1
+  fail "run --json unexpectedly exited 0 when pip-audit was missing"
 fi
 
 python3 - "$tmp_root/run-missing-tools.json" <<'PY'
@@ -584,8 +582,7 @@ if env PATH="$partial_scan_path_value" RUN_MODE=json \
   TRIVY_CONFIG_JSON="$tmp_root/trivy-empty.json" \
   TRIVY_IMAGE_JSON="$tmp_root/trivy-empty.json" \
   "$script" run --json "$mixed_repo" >"$tmp_root/run-partial-scan.json"; then
-  echo "run --json unexpectedly exited 0 when a mixed repo missed pip-audit" >&2
-  exit 1
+  fail "run --json unexpectedly exited 0 when a mixed repo missed pip-audit"
 fi
 
 python3 - "$tmp_root/run-partial-scan.json" <<'PY'
@@ -604,8 +601,7 @@ if env PATH="$partial_scan_path_value" RUN_MODE=json \
   TRIVY_CONFIG_JSON="$tmp_root/trivy-issues.json" \
   TRIVY_IMAGE_JSON="$tmp_root/trivy-empty.json" \
   "$script" run --json "$mixed_repo" >"$tmp_root/run-partial-scan-with-issues.json"; then
-  echo "run --json unexpectedly exited 0 when a mixed repo missed pip-audit and trivy found issues" >&2
-  exit 1
+  fail "run --json unexpectedly exited 0 when a mixed repo missed pip-audit and trivy found issues"
 fi
 
 python3 - "$tmp_root/run-partial-scan-with-issues.json" <<'PY'
@@ -624,29 +620,25 @@ if env PATH="$missing_rg_path_value" RUN_MODE=json \
   PIP_AUDIT_JSON="$tmp_root/pip-audit.json" \
   "$script" run --json "$python_repo" \
   >"$tmp_root/run-missing-rg.stdout" 2>"$tmp_root/run-missing-rg.stderr"; then
-  echo "run --json unexpectedly exited 0 when rg was missing" >&2
-  exit 1
+  fail "run --json unexpectedly exited 0 when rg was missing"
 fi
 grep -Fq 'rg is required to detect repo languages for repo-guard run' "$tmp_root/run-missing-rg.stderr"
 
 if env PATH="$missing_python_path_value" RUN_LOG="$run_log" \
   "$script" run "$container_repo" \
   >"$tmp_root/run-missing-python.stdout" 2>"$tmp_root/run-missing-python.stderr"; then
-  echo "run unexpectedly exited 0 when python3 was missing" >&2
-  exit 1
+  fail "run unexpectedly exited 0 when python3 was missing"
 fi
 grep -Fq 'python3 is required for repo-guard run' "$tmp_root/run-missing-python.stderr"
 
 if env PATH="$path_value" \
   "$script" run --json "$malformed_config_repo" \
   >"$tmp_root/malformed-config.stdout" 2>"$tmp_root/malformed-config.stderr"; then
-  echo "run --json unexpectedly exited 0 for malformed config" >&2
-  exit 1
+  fail "run --json unexpectedly exited 0 for malformed config"
 fi
 
 if grep -Fq 'Traceback (most recent call last):' "$tmp_root/malformed-config.stderr"; then
-  echo "malformed config unexpectedly emitted a Python traceback" >&2
-  exit 1
+  fail "malformed config unexpectedly emitted a Python traceback"
 fi
 grep -Fq 'unsupported indentation' "$tmp_root/malformed-config.stderr"
 
@@ -656,8 +648,7 @@ if env PATH="$path_value" RUN_MODE=json \
   TRIVY_CONFIG_JSON="$tmp_root/trivy-empty.json" \
   TRIVY_IMAGE_JSON="$tmp_root/trivy-empty.json" \
   "$script" run --json "$single_quoted_repo" >"$tmp_root/run-single-quoted.json"; then
-  echo "run --json unexpectedly exited 0 when unsuppressed findings were present in the single-quoted fixture" >&2
-  exit 1
+  fail "run --json unexpectedly exited 0 when unsuppressed findings were present in the single-quoted fixture"
 fi
 
 python3 - "$tmp_root/run-single-quoted.json" <<'PY'
@@ -677,8 +668,7 @@ if env PATH="$path_value" RUN_MODE=json \
   TRIVY_CONFIG_JSON="$tmp_root/trivy-empty.json" \
   TRIVY_IMAGE_JSON="$tmp_root/trivy-empty.json" \
   "$script" run --json "$python_repo" >"$tmp_root/run-invalid-json-shape.json"; then
-  echo "run --json unexpectedly exited 0 for unexpected scanner JSON shape" >&2
-  exit 1
+  fail "run --json unexpectedly exited 0 for unexpected scanner JSON shape"
 fi
 
 python3 - "$tmp_root/run-invalid-json-shape.json" <<'PY'
@@ -722,8 +712,7 @@ EOF
 if python3 "$repo_root/bin/repo_guard_runtime.py" resolve-run-config \
   "$tmp_root/runtime-invalid-version.yaml" \
   >"$tmp_root/runtime-invalid-version.stdout" 2>"$tmp_root/runtime-invalid-version.stderr"; then
-  echo "resolve-run-config unexpectedly accepted an unsupported config version" >&2
-  exit 1
+  fail "resolve-run-config unexpectedly accepted an unsupported config version"
 fi
 grep -Fq 'unsupported config version: 2' "$tmp_root/runtime-invalid-version.stderr"
 
@@ -735,8 +724,7 @@ EOF
 if python3 "$repo_root/bin/repo_guard_runtime.py" resolve-run-config \
   "$tmp_root/runtime-invalid-shape.yaml" \
   >"$tmp_root/runtime-invalid-shape.stdout" 2>"$tmp_root/runtime-invalid-shape.stderr"; then
-  echo "resolve-run-config unexpectedly accepted an invalid audit shape" >&2
-  exit 1
+  fail "resolve-run-config unexpectedly accepted an invalid audit shape"
 fi
 grep -Fq 'audit must be a mapping' "$tmp_root/runtime-invalid-shape.stderr"
 
@@ -749,13 +737,11 @@ EOF
 if python3 "$repo_root/bin/repo_guard_runtime.py" resolve-run-config \
   "$tmp_root/runtime-invalid-severity-type.yaml" \
   >"$tmp_root/runtime-invalid-severity-type.stdout" 2>"$tmp_root/runtime-invalid-severity-type.stderr"; then
-  echo "resolve-run-config unexpectedly accepted a list-valued severity" >&2
-  exit 1
+  fail "resolve-run-config unexpectedly accepted a list-valued severity"
 fi
 
 if grep -Fq 'Traceback (most recent call last):' "$tmp_root/runtime-invalid-severity-type.stderr"; then
-  echo "invalid severity type unexpectedly emitted a Python traceback" >&2
-  exit 1
+  fail "invalid severity type unexpectedly emitted a Python traceback"
 fi
 grep -Fq 'scanning.severity must be a string' "$tmp_root/runtime-invalid-severity-type.stderr"
 
@@ -789,13 +775,11 @@ EOF
 if python3 "$repo_root/bin/repo_guard_runtime.py" build-repo-result \
   "$tmp_root/runtime-invalid-suppression-payload.json" \
   >"$tmp_root/runtime-invalid-suppression.stdout" 2>"$tmp_root/runtime-invalid-suppression.stderr"; then
-  echo "build-repo-result unexpectedly accepted numeric suppression tools" >&2
-  exit 1
+  fail "build-repo-result unexpectedly accepted numeric suppression tools"
 fi
 
 if grep -Fq 'Traceback (most recent call last):' "$tmp_root/runtime-invalid-suppression.stderr"; then
-  echo "invalid suppression tools unexpectedly emitted a Python traceback" >&2
-  exit 1
+  fail "invalid suppression tools unexpectedly emitted a Python traceback"
 fi
 grep -Fq 'suppression tools must be a string or list of strings' "$tmp_root/runtime-invalid-suppression.stderr"
 

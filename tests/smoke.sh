@@ -7,6 +7,14 @@ if [ -n "${GITHUB_ACTIONS:-}" ]; then
   trap 'echo "::error file=tests/smoke.sh,line=$LINENO::failed: $BASH_COMMAND"' ERR
 fi
 
+fail() {
+  echo "$*" >&2
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    echo "::error file=tests/smoke.sh::$*"
+  fi
+  exit 1
+}
+
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 script="$repo_root/bin/repo-guard"
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/repo-guard-test.XXXXXX")"
@@ -111,8 +119,7 @@ grep -Fq "./node_modules/.bin/tsc --noEmit" "$target_repo/.pre-commit-config.yam
 grep -Fq "exclude: ^\\.pre-commit-config\\.yaml$" "$target_repo/.pre-commit-config.yaml"
 grep -Fq "name: ruff check" "$target_repo/.pre-commit-config.yaml"
 if grep -Fq "name: stale ruff check" "$target_repo/.pre-commit-config.yaml"; then
-  echo "upgrade did not refresh managed python block" >&2
-  exit 1
+  fail "upgrade did not refresh managed python block"
 fi
 grep -Fq "tool versions:" /tmp/repo-guard-check-tools.out
 grep -Fq "minimum tested" /tmp/repo-guard-check-tools.out
@@ -138,8 +145,7 @@ test -f "$git_target_repo/.git/hooks/pre-commit"
   for f in deploy/id_rsa infra/.ssh/id_ed25519 k8s/secrets.yaml services/api/.env; do
     : >"$f"
     if pre-commit run risky-filenames --files "$f" >/dev/null; then
-      echo "risky-filenames allowed nested secret path: $f" >&2
-      exit 1
+      fail "risky-filenames allowed nested secret path: $f"
     fi
   done
   : >services/api/.env.example
@@ -167,8 +173,7 @@ PY
 then
   :
 else
-  echo "pre-commit template contains lines longer than 100 characters" >&2
-  exit 1
+  fail "pre-commit template contains lines longer than 100 characters"
 fi
 
 if python3 - "$target_repo/.pre-commit-config.yaml" <<'PY'
@@ -188,8 +193,7 @@ PY
 then
   :
 else
-  echo "generated .pre-commit-config.yaml contains lines longer than 100 characters" >&2
-  exit 1
+  fail "generated .pre-commit-config.yaml contains lines longer than 100 characters"
 fi
 
 # Permissions: secret-bearing files get 600; non-secret files get 644.
@@ -219,20 +223,17 @@ EOF
 "$script" --no-install --upgrade "$upgrade_legacy_repo" >/dev/null
 grep -Fq "# repo-guard:base:start" "$upgrade_legacy_repo/.pre-commit-config.yaml"
 if grep -Fq 'refusing %s' "$upgrade_legacy_repo/.pre-commit-config.yaml"; then
-  echo "upgrade did not remove legacy base block with changed hook entry" >&2
-  exit 1
+  fail "upgrade did not remove legacy base block with changed hook entry"
 fi
 if grep -Fq '# repo-guard:python:start' "$upgrade_legacy_repo/.pre-commit-config.yaml"; then
-  echo "upgrade should not have added python block when no langs selected" >&2
-  exit 1
+  fail "upgrade should not have added python block when no langs selected"
 fi
 
 echo "smoke test passed"
 
 # Custom gitleaks rules catch the low-entropy config secrets the default rules miss.
 if ! command -v gitleaks >/dev/null 2>&1 && [ -n "${CI:-}" ]; then
-  echo "gitleaks is required in CI; the secret-detection tests would be skipped" >&2
-  exit 1
+  fail "gitleaks is required in CI; the secret-detection tests would be skipped"
 fi
 if command -v gitleaks >/dev/null 2>&1; then
   leak_dir="$tmp_root/leak"
@@ -248,8 +249,7 @@ if command -v gitleaks >/dev/null 2>&1; then
   for line in "${leak_lines[@]}"; do
     printf 'services:\n  db:\n    environment:\n      %s\n' "$line" >"$leak_dir/compose.yml"
     if gitleaks dir --no-banner -c "$leak_dir/.gitleaks.toml" "$leak_dir" >/dev/null 2>&1; then
-      echo "gitleaks missed: $line" >&2
-      exit 1
+      fail "gitleaks missed: $line"
     fi
   done
   # shellcheck disable=SC2016
@@ -269,8 +269,7 @@ grep -Eq "repo-guard:base:start in .*/stale-repo/.pre-commit-config.yaml is outd
 grep -Eq "/stale-repo/.gitleaks.toml is outdated" "$tmp_root/stale.err"
 "$script" --no-install --upgrade "$stale_repo" 2>"$tmp_root/stale.err" >/dev/null
 if grep -Fq "outdated" "$tmp_root/stale.err"; then
-  echo "--upgrade left managed content outdated" >&2
-  exit 1
+  fail "--upgrade left managed content outdated"
 fi
 cmp -s "$repo_root/templates/repo-guard/.gitleaks.toml" "$stale_repo/.gitleaks.toml"
 grep -Fv "# repo-guard:managed" "$stale_repo/.gitleaks.toml" >"$tmp_root/unmanaged.toml"
@@ -305,8 +304,7 @@ if command -v gitleaks >/dev/null 2>&1; then
     git_commit -m "leak"
   )
   if "$script" --no-install "$leaky_repo" >/dev/null 2>"$tmp_root/leaky.err"; then
-    echo "bootstrap passed a repo with a secret in its history" >&2
-    exit 1
+    fail "bootstrap passed a repo with a secret in its history"
   fi
   grep -Fq "secret(s) in existing git history" "$tmp_root/leaky.err"
 fi
@@ -321,8 +319,7 @@ awk '{ print } $0 == "# repo-guard:bash:start" { getline; print; getline; print
   print "        language: system" }' "$custom_repo/.pre-commit-config.yaml" >"$tmp_root/custom.yaml"
 mv "$tmp_root/custom.yaml" "$custom_repo/.pre-commit-config.yaml"
 if "$script" --no-install --upgrade "$custom_repo" >/dev/null 2>"$tmp_root/custom.err"; then
-  echo "--upgrade passed while keeping a block with custom hooks" >&2
-  exit 1
+  fail "--upgrade passed while keeping a block with custom hooks"
 fi
 grep -Fq "id: my-custom-hook" "$custom_repo/.pre-commit-config.yaml"
 grep -Fq "hooks the template lacks (my-custom-hook)" "$tmp_root/custom.err"
@@ -333,8 +330,7 @@ have_tool() {
     return 0
   fi
   if [ -n "${CI:-}" ]; then
-    echo "$1 is required in CI; its tests would be skipped" >&2
-    exit 1
+    fail "$1 is required in CI; its tests would be skipped"
   fi
   return 1
 }
@@ -353,8 +349,7 @@ lf_repo="$tmp_root/large-files-repo"
   pre-commit run large-files --files small.txt tracked-by-lfs.bin >/dev/null
   for f in big.bin model.gguf; do
     if pre-commit run large-files --files "$f" >/dev/null; then
-      echo "large-files allowed $f" >&2
-      exit 1
+      fail "large-files allowed $f"
     fi
   done
   REPO_GUARD_MAX_FILE_KB=10000 pre-commit run large-files --files big.bin >/dev/null
@@ -363,8 +358,7 @@ lf_repo="$tmp_root/large-files-repo"
 # A GitHub origin implies the actions checks; JS/TS implies osv.
 grep -Fqx "# repo-guard:actions:start" "$gh_repo/.pre-commit-config.yaml"
 if grep -Fqx "# repo-guard:actions:start" "$other_repo/.pre-commit-config.yaml"; then
-  echo "actions checks added without a GitHub origin" >&2
-  exit 1
+  fail "actions checks added without a GitHub origin"
 fi
 js_repo="$tmp_root/js-repo"
 "$script" --no-install --langs javascript "$js_repo" >/dev/null
@@ -387,8 +381,7 @@ if have_tool actionlint && have_tool zizmor; then
       '    runs-on: ubuntu-latest' '    steps:' \
       '      - run: echo "${{ github.event.pull_request.title }}"' >.github/workflows/bad.yml
     if pre-commit run zizmor --files .github/workflows/bad.yml >/dev/null; then
-      echo "zizmor passed a template-injection workflow" >&2
-      exit 1
+      fail "zizmor passed a template-injection workflow"
     fi
   )
 fi
@@ -403,8 +396,7 @@ if have_tool semgrep; then
     printf 'print("ok")\n' >ok.py
     pre-commit run semgrep --files ok.py >/dev/null
     if pre-commit run semgrep --files bad.py >/dev/null; then
-      echo "semgrep passed shell=True with user input" >&2
-      exit 1
+      fail "semgrep passed shell=True with user input"
     fi
   )
 fi
@@ -420,8 +412,7 @@ if [ -n "${CI:-}" ] && have_tool osv-scanner; then
       '"packages":{"":{"name":"t","version":"1.0.0","dependencies":{"lodash":"4.17.15"}},' \
       '"node_modules/lodash":{"version":"4.17.15"}}}' >package-lock.json
     if pre-commit run osv-scanner --files package-lock.json >/dev/null; then
-      echo "osv-scanner passed lodash 4.17.15" >&2
-      exit 1
+      fail "osv-scanner passed lodash 4.17.15"
     fi
   )
 fi
@@ -442,8 +433,7 @@ case "$path" in
 esac
 f="$GH_STUB_DIR/$key"
 if [ ! -f "$f" ]; then
-  echo "gh: Not Found (HTTP 404)" >&2
-  exit 1
+  fail "gh: Not Found (HTTP 404)"
 fi
 cat "$f"
 STUB
@@ -461,15 +451,13 @@ printf 'success\n' >"$good/runs"
 printf 'true\n' >"$good/rules"
 PATH="$gh_stub/bin:$PATH" GH_STUB_DIR="$good" "$script" remote "$remote_repo" >"$tmp_root/remote-good.out" 2>&1
 if grep -Eq "FAIL|warn" "$tmp_root/remote-good.out"; then
-  echo "remote flagged a fully configured repo" >&2
-  exit 1
+  fail "remote flagged a fully configured repo"
 fi
 bad="$gh_stub/bad"
 mkdir -p "$bad"
 printf 'main\tpublic\tenabled\tdisabled\n' >"$bad/repo"
 if PATH="$gh_stub/bin:$PATH" GH_STUB_DIR="$bad" "$script" remote "$remote_repo" >"$tmp_root/remote-bad.out" 2>&1; then
-  echo "remote passed a repo without push protection, alerts or workflow" >&2
-  exit 1
+  fail "remote passed a repo without push protection, alerts or workflow"
 fi
 grep -Fq "FAIL  secret scanning push protection" "$tmp_root/remote-bad.out"
 grep -Fq "secret_scanning_push_protection][status]=enabled" "$tmp_root/remote-bad.out"

@@ -7,6 +7,14 @@ if [ -n "${GITHUB_ACTIONS:-}" ]; then
   trap 'echo "::error file=tests/detect.sh,line=$LINENO::failed: $BASH_COMMAND"' ERR
 fi
 
+fail() {
+  echo "$*" >&2
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    echo "::error file=tests/detect.sh::$*"
+  fi
+  exit 1
+}
+
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 script="$repo_root/bin/repo-guard"
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/repo-guard-detect.XXXXXX")"
@@ -38,8 +46,7 @@ grep -Fqx "# repo-guard:typescript:start" "$target_repo/.pre-commit-config.yaml"
 grep -Fqx "# repo-guard:ansible:start" "$target_repo/.pre-commit-config.yaml"
 
 if grep -Fqx "# repo-guard:bash:start" "$target_repo/.pre-commit-config.yaml"; then
-  echo "unexpected bash detection" >&2
-  exit 1
+  fail "unexpected bash detection"
 fi
 
 tmp_container="$tmp_root/container-repo"
