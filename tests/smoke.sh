@@ -398,6 +398,15 @@ if have_tool semgrep; then
     if pre-commit run semgrep --files bad.py >/dev/null; then
       fail "semgrep passed shell=True with user input"
     fi
+    # Only new findings block: committed ones are the baseline.
+    git add bad.py ok.py
+    git_commit --no-verify -m "existing finding"
+    printf '# touched\n' >>bad.py
+    pre-commit run semgrep --files bad.py >/dev/null
+    printf 'subprocess.call(sys.argv[2], shell=True)\n' >>bad.py
+    if pre-commit run semgrep --files bad.py >/dev/null; then
+      fail "semgrep baseline let a new shell=True through"
+    fi
   )
 fi
 

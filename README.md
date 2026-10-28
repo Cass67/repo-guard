@@ -293,7 +293,7 @@ Extra checks, selected the same way (`--langs actions,osv,semgrep`):
 
 - `actions`: `actionlint` and `zizmor --offline` on GitHub workflows and composite actions. Implied when `origin` is on GitHub.
 - `osv`: `osv-scanner` on staged lockfiles of any ecosystem. Implied by `javascript`/`typescript`, which have no other dependency audit. Newly disclosed vulnerabilities in unchanged lockfiles are a server-side job: `repo-guard remote` checks Dependabot alerts are on.
-- `semgrep`: `semgrep` SAST on staged code with the `p/default` ruleset, or a repo-local `.semgrep.yml`/`.semgrep.yaml`. Needs network for registry rules.
+- `semgrep`: `semgrep` SAST on staged code with the `p/default` ruleset, or a repo-local `.semgrep.yml`/`.semgrep.yaml`. Only findings new since `HEAD` block a commit (`--baseline-commit HEAD`, like golangci-lint's `--new-from-rev=HEAD`), so an existing codebase can adopt it without fixing every old finding first. Needs network for registry rules.
 
 Aliases:
 
